@@ -21,7 +21,13 @@ One server, many nodes — all your own devices. Server gets `192.168.100.1`. Ea
 
 Nodes prefer direct P2P connections (UDP hole-punching). When NAT prevents direct connection, traffic falls back to server relay.
 
-## Recommended: Config File + System Service
+## Install
+
+Download the latest binary from [GitHub Releases](https://github.com/zyoung11/NetZero/releases).
+
+Linux: `netzero-linux` | Windows: `netzero-win.exe`
+
+## Setup
 
 Create `config.json` next to the binary, then register as a service for auto-start on boot.
 
@@ -117,11 +123,7 @@ netzero status
 ## Build
 
 ```bash
-# Linux
 go build -ldflags="-s -w" .
-
-# Windows (cross-compile from Linux)
-GOOS=windows go build -ldflags="-s -w" -o netzero.exe .
 ```
 
 ## Network
