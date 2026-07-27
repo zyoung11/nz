@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -27,7 +28,7 @@ type server struct {
 	name     string
 }
 
-func runServer(password string, port int, tunName, name string) error {
+func runServer(password string, port int, tunName, name, configPath string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -38,7 +39,7 @@ func runServer(password string, port int, tunName, name string) error {
 	}
 	defer conn.Close()
 
-	state, err := loadServerState(password)
+	state, err := loadServerState(password, configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load state file: %w", err)
 	}
@@ -115,6 +116,12 @@ func (s *server) handleMessage(msg message, remote netip.AddrPort) {
 		s.handlePeerHello(msg.Payload, remote)
 	case msgPeerHelloRpy:
 		s.handlePeerHelloReply(msg.Payload, remote)
+	case msgPeerList:
+		s.handlePeerList(msg.Payload, remote)
+	case msgDisconnect:
+		s.handleDisconnect(remote)
+	case msgPong:
+		s.handlePong(msg.Payload)
 	case msgData:
 		s.handleData(msg.Payload, remote)
 	case msgRelayData:
@@ -457,7 +464,7 @@ func (s *server) heartbeatCheck(ctx context.Context) {
 	}
 }
 
-func (s *server) sendPeerHello(vpnIP netip.Addr, target netip.AddrPort) {
+func (s *server) sendPeerHello(_ netip.Addr, target netip.AddrPort) {
 	nonce, err := genNonce()
 	if err != nil {
 		return
@@ -472,6 +479,84 @@ func (s *server) sendPeerHello(vpnIP netip.Addr, target netip.AddrPort) {
 	helloMsg := marshalMessage(message{Type: msgPeerHello, Payload: helloPayload})
 	addr := net.UDPAddrFromAddrPort(target)
 	s.conn.WriteToUDP(helloMsg, addr)
+}
+
+func (s *server) handlePong(payload []byte) {
+	if len(payload) < 4 {
+		return
+	}
+	var ip4 [4]byte
+	copy(ip4[:], payload[0:4])
+	ip := netip.AddrFrom4(ip4)
+
+	if p := s.peers.get(ip); p != nil {
+		p.lastSeen = time.Now()
+	}
+}
+
+func (s *server) handleDisconnect(remote netip.AddrPort) {
+	peer := s.peers.getByReal(remote)
+	if peer != nil {
+		peer.state = peerDisconnected
+		logInfo("%v (%v) disconnected", peer.vpnIP, peer.realAddr)
+	}
+}
+
+func (s *server) handlePeerList(payload []byte, remote netip.AddrPort) {
+	_, err := decrypt(s.key, payload)
+	if err != nil {
+		return
+	}
+
+	type peerEntry struct {
+		Name   string `json:"name"`
+		IP     string `json:"ip"`
+		Status string `json:"status"`
+	}
+
+	var list []peerEntry
+	list = append(list, peerEntry{Name: s.name, IP: s.vpnIP.String(), Status: "online"})
+
+	// Broadcast poll to trigger immediate keepalive refresh
+	for _, p := range s.peers.all() {
+		if p.state == peerConnected && p.realAddr.IsValid() {
+			pingMsg := marshalMessage(message{Type: msgPing, Payload: s.vpnIP.AsSlice()})
+			addr := net.UDPAddrFromAddrPort(p.realAddr)
+			s.conn.WriteToUDP(pingMsg, addr)
+		}
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	now := time.Now()
+	s.state.mu.Lock()
+	for _, n := range s.state.Nodes {
+		ip, _ := netip.ParseAddr(n.VPNIP)
+		status := "offline"
+		if p := s.peers.get(ip); p != nil {
+			switch p.state {
+			case peerConnected:
+				if now.Sub(p.lastSeen) < 90*time.Second {
+					status = "online"
+				} else {
+					status = "idle"
+				}
+			case peerProbing:
+				status = "probing"
+			case peerPunching:
+				status = "connecting"
+			}
+		}
+		list = append(list, peerEntry{Name: n.Name, IP: n.VPNIP, Status: status})
+	}
+	s.state.mu.Unlock()
+
+	data, _ := json.Marshal(list)
+	encPayload, err := encrypt(s.key, data)
+	if err != nil {
+		return
+	}
+	reply := marshalMessage(message{Type: msgPeerListRpy, Payload: encPayload})
+	s.sendTo(reply, remote)
 }
 
 func (s *server) sendTo(msg []byte, addr netip.AddrPort) {

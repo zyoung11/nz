@@ -68,6 +68,11 @@ func runNode(serverAddr netip.AddrPort, name, password, tunName, routeMode strin
 	go n.readFromUDP()
 	go n.keepAliveLoop()
 
+	defer func() {
+		disconnectMsg := marshalMessage(message{Type: msgDisconnect, Payload: nil})
+		n.conn.Write(disconnectMsg)
+	}()
+
 	<-ctx.Done()
 	logInfo("received signal, shutting down...")
 	return nil
@@ -307,9 +312,11 @@ func (n *node) handleUDPMessage(msg message, remote netip.AddrPort) {
 		n.handlePeerHelloReply(msg.Payload, remote)
 	case msgData:
 		n.handleData(msg.Payload, remote)
+	case msgPing:
+		n.handlePing(remote)
 	case msgRelayData:
 		n.handleRelayData(msg.Payload, remote)
-	case msgKeepAlive, msgError:
+	case msgKeepAlive, msgError, msgDisconnect, msgPong:
 	}
 }
 
@@ -444,6 +451,12 @@ func (n *node) handlePeerHelloReply(payload []byte, remote netip.AddrPort) {
 	}
 
 	logSuccess("P2P established: %v ↔ %v", n.vpnIP, srcIP)
+}
+
+func (n *node) handlePing(remote netip.AddrPort) {
+	pongPayload := n.vpnIP.AsSlice()
+	pongMsg := marshalMessage(message{Type: msgPong, Payload: pongPayload})
+	n.conn.Write(pongMsg)
 }
 
 func (n *node) handleData(payload []byte, remote netip.AddrPort) {

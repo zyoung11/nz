@@ -18,7 +18,7 @@ const (
 	argonThreads = 4
 )
 
-var globalSalt = []byte("netzero-v1-global-salt-16")
+var globalSalt = []byte("nz-v1-global-salt-16")
 
 // sharedKey derives a single global key from password, shared by all participants.
 func sharedKey(password string) []byte {

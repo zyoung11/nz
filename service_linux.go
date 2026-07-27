@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const serviceName = "netzero"
+const serviceName = "nz"
 const systemdDir = "/etc/systemd/system"
 
 func installService() error {
@@ -26,7 +26,7 @@ func installService() error {
 	unitPath := filepath.Join(systemdDir, serviceName+".service")
 
 	unit := fmt.Sprintf(`[Unit]
-Description=netzero overlay network
+Description=nz overlay network
 After=network-online.target
 Wants=network-online.target
 
@@ -50,7 +50,7 @@ WantedBy=multi-user.target
 	if out, err := exec.Command("systemctl", "enable", serviceName).CombinedOutput(); err != nil {
 		return fmt.Errorf("enable failed: %w (%s)", err, out)
 	}
-	if out, err := exec.Command("systemctl", "start", serviceName).CombinedOutput(); err != nil {
+	if out, err := exec.Command("systemctl", "restart", serviceName).CombinedOutput(); err != nil {
 		return fmt.Errorf("start failed: %w (%s)", err, out)
 	}
 
@@ -59,10 +59,15 @@ WantedBy=multi-user.target
 }
 
 func uninstallService() error {
+	unitPath := filepath.Join(systemdDir, serviceName+".service")
+	if _, err := os.Stat(unitPath); os.IsNotExist(err) {
+		logWarn("service not installed")
+		return nil
+	}
+
 	exec.Command("systemctl", "stop", serviceName).Run()
 	exec.Command("systemctl", "disable", serviceName).Run()
-
-	os.Remove(filepath.Join(systemdDir, serviceName+".service"))
+	os.Remove(unitPath)
 	exec.Command("systemctl", "daemon-reload").Run()
 
 	logSuccess("service removed")

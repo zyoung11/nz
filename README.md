@@ -1,7 +1,7 @@
-# NetZero
+# nz
 
 A compact overlay network tool for personal use — connect your own devices into a virtual LAN.
-Single binary, password-only auth, NAT hole-punching with relay fallback.
+Single binary, config-file driven. Password-only auth, NAT hole-punching with relay fallback.
 Runs on **Linux** and **Windows**.
 
 Forked and simplified from [Slack's Nebula](https://github.com/slackhq/nebula).
@@ -23,13 +23,11 @@ Nodes prefer direct P2P connections (UDP hole-punching). When NAT prevents direc
 
 ## Install
 
-Download the latest binary from [GitHub Releases](https://github.com/zyoung11/NetZero/releases).
+Download the latest binary from [GitHub Releases](https://github.com/zyoung11/nz/releases).
 
-Linux: `netzero-linux` | Windows: `netzero-win.exe`
+## Quick Start
 
-## Setup
-
-Create `config.json` next to the binary, then register as a service for auto-start on boot.
+Create `config.json` next to the binary:
 
 **Server:**
 ```json
@@ -42,29 +40,38 @@ Create `config.json` next to the binary, then register as a service for auto-sta
 ```
 
 ```bash
-# Install and start (requires root / admin)
-sudo ./netzero install --config config.json
+# Install as system service (auto-start on boot)
+sudo ./nz install --config config.json
 
-# Check status
-sudo ./netzero status
+# List all nodes
+./nz ls
+
+# Run in foreground (testing)
+./nz run
 
 # Stop and remove service
-sudo ./netzero uninstall
+sudo ./nz uninstall
 ```
 
 Linux uses systemd. Windows uses SCM (wintun.dll embedded in binary, no separate driver install needed).
 
-## Testing (Foreground)
+Nodes can now reach each other on `192.168.100.x` — ping, SSH, or any TCP/UDP service.
 
-```bash
-# Server
-./netzero --server --password mysecret
+## CLI
 
-# Node
-./netzero --node --name laptop --domain my-server.com --password mysecret
+```
+./nz install  --config <path>   Register as system service
+./nz uninstall                  Stop and remove service
+./nz ls                         List all nodes with status
+./nz run                        Run in foreground
 ```
 
-Now nodes can reach each other on `192.168.100.x`.
+`ls` output shows each node's name, VPN IP, and status:
+- `online` — connected and sending heartbeats
+- `idle` — connected but no recent heartbeat
+- `offline` — not connected
+
+The local machine's row is highlighted in blue.
 
 ## Configuration
 
@@ -75,8 +82,8 @@ Now nodes can reach each other on `192.168.100.x`.
     "mode":     "server",
     "password": "mysecret",
     "name":     "my-vps",
-    "port":     6969,
-    "tun":      "netzero"
+    "port":     4242,
+    "tun":      "nz0"
 }
 ```
 
@@ -88,10 +95,10 @@ Now nodes can reach each other on `192.168.100.x`.
     "password": "mysecret",
     "name":     "laptop",
     "domain":   "my-server.com",
-    "ip":       50,
-    "route":    "relay",
-    "port":     6969,
-    "tun":      "netzero"
+    "ip":       5,
+    "route":    "auto",
+    "port":     4242,
+    "tun":      "nz0"
 }
 ```
 
@@ -101,24 +108,12 @@ Now nodes can reach each other on `192.168.100.x`.
 |---|---|---|---|---|
 | `mode` | both | yes | — | `"server"` or `"node"` |
 | `password` | both | yes | — | Shared secret |
-| `name` | both | no | `"server"` | Device identifier (must be unique per node) |
+| `name` | both | no | `"server"` | Device identifier (unique per node) |
 | `domain` | node | yes | — | Server address or hostname |
-| `ip` | node | no | auto | Request specific VPN IP (2-254) |
+| `ip` | node | no | auto | Request specific VPN IP (2–254) |
 | `route` | node | no | `auto` | `auto` / `p2p` / `relay` |
 | `port` | both | no | `4242` | UDP port (must match across all peers) |
 | `tun` | both | no | `nz0` | TUN device name |
-
-## CLI
-
-```
-netzero --server --password <password>
-netzero --node --name <name> --domain <addr> --password <password>
-netzero --config <path>
-
-netzero install  --config <path>
-netzero uninstall
-netzero status
-```
 
 ## Build
 
@@ -129,10 +124,6 @@ go build -ldflags="-s -w" .
 ## Network
 
 `192.168.100.0/24`. Server fixed at `.1`, nodes allocated `.2` through `.254`.
-
-## Credits
-
-Forked and simplified from [Slack's Nebula](https://github.com/slackhq/nebula). Stripped down from ~35,000 lines to ~2,300 for personal use — removed PKI/certificates, firewall, SSH, DNS, stats, and YAML config.
 
 ## License
 

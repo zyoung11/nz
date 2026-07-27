@@ -9,14 +9,10 @@ import (
 	"sync"
 )
 
-const stateFileName = "netzero-state.json"
+const stateFileName = "nz-state.json"
 
-func stateFilePath() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return stateFileName
-	}
-	return filepath.Join(filepath.Dir(exe), stateFileName)
+func stateFilePath(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), stateFileName)
 }
 
 type nodeRecord struct {
@@ -32,13 +28,17 @@ type serverState struct {
 	Nodes    []nodeRecord `json:"nodes"`
 }
 
-func loadServerState(password string) (*serverState, error) {
+var stateMu sync.Mutex
+var stateConfigPath string
+
+func loadServerState(password, configPath string) (*serverState, error) {
+	stateConfigPath = configPath
 	s := &serverState{
 		NextIP:   2,
 		Password: password,
 		Nodes:    make([]nodeRecord, 0),
 	}
-	data, err := os.ReadFile(stateFilePath())
+	data, err := os.ReadFile(stateFilePath(configPath))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return s, s.save()
@@ -59,7 +59,7 @@ func (s *serverState) save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(stateFilePath(), data, 0600)
+	return os.WriteFile(stateFilePath(stateConfigPath), data, 0600)
 }
 
 func (s *serverState) allocateIP(name string, desiredIP int, realAddr netip.AddrPort) (netip.Addr, error) {

@@ -43,7 +43,7 @@ func detectWindowsService() bool {
 	return true
 }
 
-const serviceName = "netzero"
+const serviceName = "nz"
 
 func isWindowsService() (bool, error) {
 	return svc.IsWindowsService()
@@ -69,7 +69,7 @@ func (ws *windowsService) Execute(args []string, req <-chan svc.ChangeRequest, s
 
 	errCh := make(chan error, 1)
 	if cfg.Mode == "server" {
-		go func() { errCh <- runServer(cfg.Password, cfg.Port, cfg.TUN, cfg.Name) }()
+		go func() { errCh <- runServer(cfg.Password, cfg.Port, cfg.TUN, cfg.Name, defaultConfigPath()) }()
 	} else {
 		go func() {
 			addr, e := resolveAddr(cfg.Domain, cfg.Port)
@@ -123,8 +123,8 @@ func installService() error {
 	defer m.Disconnect()
 
 	s, err := m.CreateService(serviceName, absExe, mgr.Config{
-		DisplayName: "netzero",
-		Description: "netzero overlay network service",
+		DisplayName: "nz",
+		Description: "nz overlay network service",
 		StartType:   mgr.StartAutomatic,
 	}, binPath)
 	if err != nil {
@@ -156,22 +156,23 @@ func installService() error {
 func uninstallService() error {
 	m, err := mgr.Connect()
 	if err != nil {
-		return fmt.Errorf("failed to connect to SCM: %w", err)
+		logWarn("cannot connect to SCM, service may not exist")
+		return nil
 	}
 	defer m.Disconnect()
 
 	s, err := m.OpenService(serviceName)
 	if err != nil {
-		logWarn("service not found, may already be removed")
-	} else {
-		s.Control(svc.Stop)
-		s.Close()
+		logWarn("service not installed")
+		return nil
 	}
+	s.Control(svc.Stop)
+	s.Close()
 
 	cmd := exec.Command("sc", "delete", serviceName)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		if !strings.Contains(string(out), "not exist") {
-			logWarn("failed to delete service registration: %s", out)
+			logWarn("failed to delete service: %s", out)
 		}
 	}
 

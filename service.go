@@ -24,7 +24,7 @@ func serviceArgs() ([]string, error) {
 		return nil, err
 	}
 	if _, err := os.Stat(cfgPath); err != nil {
-		return nil, fmt.Errorf("配置文件 %s 不存在，请先创建", cfgPath)
+		return nil, fmt.Errorf("config %s not found", cfgPath)
 	}
 	return []string{exe, "run", "--config", cfgPath}, nil
 }

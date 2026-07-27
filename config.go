@@ -41,7 +41,7 @@ func loadConfig(path string) (*config, error) {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 	if cfg.Password == "" {
-		return nil, fmt.Errorf("password 未设置")
+		return nil, fmt.Errorf("password is not set")
 	}
 	if cfg.Mode != "server" && cfg.Mode != "node" {
 		return nil, fmt.Errorf("mode must be \"server\" or \"node\"")

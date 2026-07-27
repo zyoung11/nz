@@ -1,4 +1,4 @@
-module netzero
+module nz
 
 go 1.26.5
 

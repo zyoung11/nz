@@ -20,6 +20,11 @@ const (
 	msgPeerIntro    msgType = 0x07
 	msgPeerHello    msgType = 0x10
 	msgPeerHelloRpy msgType = 0x11
+	msgPeerList     msgType = 0x12
+	msgPeerListRpy  msgType = 0x13
+	msgDisconnect   msgType = 0x14
+	msgPing         msgType = 0x15
+	msgPong         msgType = 0x16
 	msgData         msgType = 0x20
 	msgKeepAlive    msgType = 0x0E
 	msgRelayData    msgType = 0x30
