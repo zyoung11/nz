@@ -429,8 +429,13 @@ func (s *server) routeOutboundPacket(raw []byte) {
 
 func (s *server) handleKeepAlive(remote netip.AddrPort) {
 	peer := s.peers.getByReal(remote)
-	if peer != nil {
-		peer.lastSeen = time.Now()
+	if peer == nil {
+		return
+	}
+	peer.lastSeen = time.Now()
+	if peer.state == peerDisconnected || peer.state == peerProbing {
+		peer.state = peerConnected
+		logInfo("%v (%v) reconnected via keepalive", peer.vpnIP, peer.realAddr)
 	}
 }
 
