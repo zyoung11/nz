@@ -39,67 +39,59 @@ Create `config.json` next to the binary:
 {"mode":"node","password":"mysecret","name":"laptop","domain":"my-server.com"}
 ```
 
+### Linux
+
 ```bash
-# Install as system service (auto-start on boot)
-sudo ./nz install --config config.json
-
-# List all nodes
-./nz ls
-
-# Run in foreground (testing)
-./nz run
-
-# Stop and remove service
-sudo ./nz uninstall
+sudo ./nz install --config config.json   # register systemd service (auto-start)
+./nz ls                                   # list all nodes
+./nz run                                  # foreground (testing)
+sudo ./nz uninstall                       # stop and remove
 ```
 
-Linux uses systemd. Windows uses SCM (wintun.dll embedded in binary, no separate driver install needed).
+### Windows
+
+Double-click `nz.exe` to launch the system tray app. Or use CLI:
+
+```powershell
+.\nz.exe install --config config.json     # register auto-start (Task Scheduler)
+.\nz.exe ls                                # list all nodes
+.\nz.exe run                               # foreground (testing)
+.\nz.exe uninstall                         # stop and remove
+```
+
+The tray icon shows online/offline status, opens a web dashboard, and lets you toggle auto-start.
 
 Nodes can now reach each other on `192.168.100.x` — ping, SSH, or any TCP/UDP service.
 
 ## CLI
 
 ```
-./nz install  --config <path>   Register as system service
-./nz uninstall                  Stop and remove service
+./nz install  --config <path>   Register auto-start
+./nz uninstall                  Stop and remove
 ./nz ls                         List all nodes with status
 ./nz run                        Run in foreground
 ```
 
-`ls` output shows each node's name, VPN IP, and status:
-- `online` — connected and sending heartbeats
-- `idle` — connected but no recent heartbeat
+`ls` output shows a Unicode table with each node's name, VPN IP, and status:
+- `online` — connected, heartbeats active
+- `idle` — connected, no recent heartbeat
+- `probing` — server testing if node is alive
 - `offline` — not connected
 
-The local machine's row is highlighted in blue.
+The local machine's row is highlighted.
 
 ## Configuration
 
-### Server (example with all fields)
+### Server (all fields)
 
 ```json
-{
-    "mode":     "server",
-    "password": "mysecret",
-    "name":     "my-vps",
-    "port":     4242,
-    "tun":      "nz0"
-}
+{"mode":"server","password":"mysecret","name":"my-vps","port":4242,"tun":"nz0"}
 ```
 
-### Node (example with all fields)
+### Node (all fields)
 
 ```json
-{
-    "mode":     "node",
-    "password": "mysecret",
-    "name":     "laptop",
-    "domain":   "my-server.com",
-    "ip":       5,
-    "route":    "auto",
-    "port":     4242,
-    "tun":      "nz0"
-}
+{"mode":"node","password":"mysecret","name":"laptop","domain":"my-server.com","ip":5,"route":"auto","port":4242,"tun":"nz0"}
 ```
 
 ### Fields
@@ -118,12 +110,21 @@ The local machine's row is highlighted in blue.
 ## Build
 
 ```bash
-go build -ldflags="-s -w" .
+# Linux
+go build -ldflags="-s -w" -o nz .
+
+# Windows (needs rsrc for icon + UAC manifest)
+rsrc -manifest nz.exe.manifest -ico nz.ico -o rsrc_windows_amd64.syso
+go build -ldflags="-s -w" -o nz.exe .
 ```
 
 ## Network
 
 `192.168.100.0/24`. Server fixed at `.1`, nodes allocated `.2` through `.254`.
+
+## Credits
+
+Forked and simplified from [Slack's Nebula](https://github.com/slackhq/nebula). Stripped down from ~35,000 lines to ~2,500 for personal use — removed PKI/certificates, firewall, SSH, DNS, stats, and YAML config.
 
 ## License
 

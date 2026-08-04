@@ -517,7 +517,6 @@ func (s *server) handlePeerList(payload []byte, remote netip.AddrPort) {
 	var list []peerEntry
 	list = append(list, peerEntry{Name: s.name, IP: s.vpnIP.String(), Status: "online"})
 
-	// Broadcast poll to trigger immediate keepalive refresh
 	for _, p := range s.peers.all() {
 		if p.state == peerConnected && p.realAddr.IsValid() {
 			pingMsg := marshalMessage(message{Type: msgPing, Payload: s.vpnIP.AsSlice()})

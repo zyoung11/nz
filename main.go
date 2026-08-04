@@ -15,7 +15,8 @@ import (
 const defaultPort = 4242
 
 func main() {
-	if detectWindowsService() {
+	if isWindows() && (len(os.Args) == 1 || os.Args[1] == "--autostart") {
+		runSystrayWindows()
 		return
 	}
 
