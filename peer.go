@@ -16,15 +16,15 @@ const (
 )
 
 type peer struct {
-	vpnIP       netip.Addr
-	realAddr    netip.AddrPort
-	state       peerState
-	lastSeen    time.Time
-	sendKey     []byte
-	recvKey     []byte
-	punchStart  time.Time
-	punchCount  int
-	probeSent   time.Time
+	vpnIP      netip.Addr
+	realAddr   netip.AddrPort
+	state      peerState
+	lastSeen   time.Time
+	sendKey    []byte
+	recvKey    []byte
+	punchStart time.Time
+	punchCount int
+	probeSent  time.Time
 }
 
 type peerMap struct {

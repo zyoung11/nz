@@ -48,7 +48,7 @@ func createTUN(cfgName string, vpnIP netip.Addr, _ int) (tunDevice, error) {
 
 	dev, err := tun.CreateTUN(cfgName, 9000)
 	if err != nil {
-		return nil, fmt.Errorf("创建TUN设备失败: %w（需要wintun.dll放在程序同目录或C:\\Windows\\System32）", err)
+		return nil, fmt.Errorf("failed to create TUN device: %w (wintun.dll must be next to the binary or in C:\\Windows\\System32)", err)
 	}
 
 	name, err := dev.Name()

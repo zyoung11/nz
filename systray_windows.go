@@ -3,8 +3,8 @@
 package main
 
 import (
-	"encoding/json"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -23,9 +23,9 @@ import (
 var trayIcon []byte
 
 var (
-	dashboardPort = 19999
-	serverAddr    string
-	httpListener  net.Listener
+	dashboardPort  = 19999
+	serverAddr     string
+	httpListener   net.Listener
 	serviceRunning bool
 )
 
@@ -230,8 +230,7 @@ func (s *systrayState) runBackground() {
 	if s.cfg.Mode == "server" {
 		runServer(s.cfg.Password, s.cfg.Port, s.cfg.TUN, s.cfg.Name, defaultConfigPath())
 	} else {
-		addr, _ := resolveAddr(s.cfg.Domain, s.cfg.Port)
-		runNode(addr, s.cfg.Name, s.cfg.Password, s.cfg.TUN, s.cfg.Route, s.cfg.DesiredIP)
+		runNode(s.cfg.Domain, s.cfg.Port, s.cfg.Name, s.cfg.Password, s.cfg.TUN, s.cfg.Route, s.cfg.DesiredIP)
 	}
 	serviceRunning = false
 }

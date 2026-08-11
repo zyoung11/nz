@@ -84,12 +84,7 @@ func runCmd() {
 		return
 	}
 
-	serverAddr, err := resolveAddr(cfg.Domain, cfg.Port)
-	if err != nil {
-		logError("failed to resolve server: %v", err)
-		os.Exit(1)
-	}
-	if err := runNode(serverAddr, cfg.Name, cfg.Password, cfg.TUN, cfg.Route, cfg.DesiredIP); err != nil {
+	if err := runNode(cfg.Domain, cfg.Port, cfg.Name, cfg.Password, cfg.TUN, cfg.Route, cfg.DesiredIP); err != nil {
 		logError("%v", err)
 		os.Exit(1)
 	}

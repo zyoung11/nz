@@ -127,7 +127,7 @@ func (s *server) handleMessage(msg message, remote netip.AddrPort) {
 	case msgRelayData:
 		s.handleRelayData(msg.Payload, remote)
 	case msgKeepAlive:
-		s.handleKeepAlive(remote)
+		s.handleKeepAlive(msg.Payload, remote)
 	case msgError:
 	}
 }
@@ -171,12 +171,12 @@ func (s *server) handleConfirm(payload []byte, remote netip.AddrPort) {
 
 	decrypted, err := decrypt(s.key, payload)
 	if err != nil {
-		logError("验证失败: %v，来自 %v", err, remote)
+		logError("auth failed: %v, from %v", err, remote)
 		return
 	}
 
 	if string(decrypted) != string(pc.serverNonce) {
-		logError("auth failed: nonce mismatch from，来自 %v", remote)
+		logError("auth failed: nonce mismatch, from %v", remote)
 		return
 	}
 
@@ -244,11 +244,6 @@ func (s *server) handlePeerQuery(payload []byte, remote netip.AddrPort) {
 		encErrPayload, _ := encrypt(s.key, errPayload)
 		errMsg := marshalMessage(message{Type: msgPeerQueryRpy, Payload: encErrPayload})
 		s.sendTo(errMsg, remote)
-		return
-	}
-
-	targetPeer := s.peers.get(targetIP)
-	if targetPeer != nil && targetPeer.state == peerDisconnected {
 		return
 	}
 
@@ -427,11 +422,31 @@ func (s *server) routeOutboundPacket(raw []byte) {
 	}
 }
 
-func (s *server) handleKeepAlive(remote netip.AddrPort) {
-	peer := s.peers.getByReal(remote)
-	if peer != nil {
-		peer.lastSeen = time.Now()
+func (s *server) handleKeepAlive(payload []byte, remote netip.AddrPort) {
+	ip, err := unmarshalKeepAlive(payload)
+	if err != nil {
+		return
 	}
+
+	p := s.peers.get(ip)
+	if p == nil {
+		if _, found := s.state.findByVPNIP(ip); !found {
+			return
+		}
+		logInfo("%v (%v) re-registered via keepalive after restart", ip, remote)
+	}
+
+	if p != nil && p.realAddr != remote {
+		logInfo("%v address changed: %v -> %v", ip, p.realAddr, remote)
+		s.state.updateRealAddr(ip, remote)
+	} else if p != nil && p.state != peerConnected {
+		logInfo("%v (%v) recovered via keepalive", ip, remote)
+	}
+
+	s.peers.setConnected(ip, remote)
+
+	ack := marshalMessage(message{Type: msgKeepAlive, Payload: s.vpnIP.AsSlice()})
+	s.sendTo(ack, remote)
 }
 
 func (s *server) heartbeatCheck(ctx context.Context) {
@@ -452,6 +467,7 @@ func (s *server) heartbeatCheck(ctx context.Context) {
 						p.probeSent = now
 						logWarn("%v (%v) heartbeat lost, probing", p.vpnIP, p.realAddr)
 						s.sendPeerHello(p.vpnIP, p.realAddr)
+						go s.reprobePeer(p.vpnIP, p.realAddr)
 					}
 				case peerProbing:
 					if now.Sub(p.probeSent) > 15*time.Second {
@@ -462,6 +478,13 @@ func (s *server) heartbeatCheck(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (s *server) reprobePeer(vpnIP netip.Addr, target netip.AddrPort) {
+	time.Sleep(3 * time.Second)
+	s.sendPeerHello(vpnIP, target)
+	time.Sleep(3 * time.Second)
+	s.sendPeerHello(vpnIP, target)
 }
 
 func (s *server) sendPeerHello(_ netip.Addr, target netip.AddrPort) {

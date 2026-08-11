@@ -188,6 +188,19 @@ func unmarshalRelayData(payload []byte) (netip.Addr, []byte, error) {
 	return netip.AddrFrom4(ip4), payload[4:], nil
 }
 
+func marshalKeepAlive(vpnIP netip.Addr) []byte {
+	return vpnIP.AsSlice()
+}
+
+func unmarshalKeepAlive(payload []byte) (netip.Addr, error) {
+	if len(payload) < 4 {
+		return netip.Addr{}, fmt.Errorf("KeepAlive too short")
+	}
+	var ip4 [4]byte
+	copy(ip4[:], payload[0:4])
+	return netip.AddrFrom4(ip4), nil
+}
+
 func normalizeAddr(addr netip.AddrPort) netip.AddrPort {
 	return netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port())
 }
