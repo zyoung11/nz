@@ -42,6 +42,7 @@ type node struct {
 	peers          *peerMap
 	connected      atomic.Bool
 	serverLastSeen atomic.Int64
+	handshaking    atomic.Bool
 	punchMu        sync.Mutex
 	lastPunch      map[netip.Addr]time.Time
 	reconnectMu    sync.Mutex
@@ -127,6 +128,9 @@ func (n *node) connectToServer(ctx context.Context) error {
 }
 
 func (n *node) doHandshake() error {
+	n.handshaking.Store(true)
+	defer n.handshaking.Store(false)
+
 	clientNonce, err := genNonce()
 	if err != nil {
 		return err
@@ -325,11 +329,16 @@ func (n *node) requestPeerInfo(targetIP netip.Addr) {
 func (n *node) readFromUDP() {
 	buf := make([]byte, 65536)
 	for {
+		if n.handshaking.Load() {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
 		nread, remote, err := n.conn.ReadFromUDPAddrPort(buf)
 		if err != nil {
 			if isClosedError(err) {
 				return
 			}
+			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 
