@@ -6,7 +6,12 @@ import (
 	"net/netip"
 )
 
-const protocolVersion byte = 0x01
+const protocolVersion byte = 0x02
+
+const (
+	routeP2P   byte = 0
+	routeRelay byte = 1
+)
 
 type msgType byte
 
@@ -171,21 +176,38 @@ func marshalPeerQueryRpy(vpnIP netip.Addr, realAddr netip.AddrPort) []byte {
 	return marshalPeerIntro(vpnIP, realAddr)
 }
 
-func marshalRelayData(targetVPN netip.Addr, data []byte) []byte {
+func marshalData(srcVPN netip.Addr, data []byte) []byte {
 	buf := make([]byte, 4+len(data))
-	ip4 := targetVPN.As4()
-	copy(buf[0:4], ip4[:])
+	copy(buf[0:4], srcVPN.AsSlice())
 	copy(buf[4:], data)
 	return buf
 }
 
-func unmarshalRelayData(payload []byte) (netip.Addr, []byte, error) {
+func unmarshalData(payload []byte) (netip.Addr, []byte, error) {
 	if len(payload) < 4 {
-		return netip.Addr{}, nil, fmt.Errorf("RelayData too short")
+		return netip.Addr{}, nil, fmt.Errorf("Data too short")
 	}
 	var ip4 [4]byte
 	copy(ip4[:], payload[0:4])
 	return netip.AddrFrom4(ip4), payload[4:], nil
+}
+
+func marshalRelayData(srcVPN, targetVPN netip.Addr, data []byte) []byte {
+	buf := make([]byte, 8+len(data))
+	copy(buf[0:4], srcVPN.AsSlice())
+	copy(buf[4:8], targetVPN.AsSlice())
+	copy(buf[8:], data)
+	return buf
+}
+
+func unmarshalRelayData(payload []byte) (netip.Addr, netip.Addr, []byte, error) {
+	if len(payload) < 8 {
+		return netip.Addr{}, netip.Addr{}, nil, fmt.Errorf("RelayData too short")
+	}
+	var srcIP4, targetIP4 [4]byte
+	copy(srcIP4[:], payload[0:4])
+	copy(targetIP4[:], payload[4:8])
+	return netip.AddrFrom4(srcIP4), netip.AddrFrom4(targetIP4), payload[8:], nil
 }
 
 func marshalKeepAlive(vpnIP netip.Addr) []byte {

@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"maps"
 	"net"
 	"net/netip"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/mattn/go-runewidth"
 )
 
 const defaultPort = 4242
@@ -146,35 +149,48 @@ func lsCmd() {
 	}
 
 	type peerEntry struct {
-		Name   string `json:"name"`
-		IP     string `json:"ip"`
-		Status string `json:"status"`
+		Name   string            `json:"name"`
+		IP     string            `json:"ip"`
+		Status string            `json:"status"`
+		Routes map[string]string `json:"routes"`
 	}
 	var list []peerEntry
 	json.Unmarshal(decData, &list)
 
 	localName := cfg.Name
 
-	nameWidth, ipWidth, statusWidth := 4, 2, 6
+	routeByIP := map[string]string{}
+	for i, e := range list {
+		isLocal := i > 0 && e.Name == localName
+		if cfg.Mode == "server" {
+			isLocal = i == 0
+		}
+		if isLocal {
+			maps.Copy(routeByIP, e.Routes)
+		}
+	}
+
+	nameWidth, ipWidth, statusWidth, routeWidth := 4, 2, 6, 5
 	for _, e := range list {
-		if len(e.Name) > nameWidth {
-			nameWidth = len(e.Name)
+		if runewidth.StringWidth(e.Name) > nameWidth {
+			nameWidth = runewidth.StringWidth(e.Name)
 		}
-		if len(e.IP) > ipWidth {
-			ipWidth = len(e.IP)
+		if runewidth.StringWidth(e.IP) > ipWidth {
+			ipWidth = runewidth.StringWidth(e.IP)
 		}
-		if len(e.Status) > statusWidth {
-			statusWidth = len(e.Status)
+		if runewidth.StringWidth(e.Status) > statusWidth {
+			statusWidth = runewidth.StringWidth(e.Status)
 		}
 	}
 	nameWidth += 2
 	ipWidth += 2
 	statusWidth += 2
+	routeWidth += 2
 
-	top := "┌" + repStr("─", nameWidth) + "┬" + repStr("─", ipWidth) + "┬" + repStr("─", statusWidth) + "┐"
-	header := "│" + padStr("Name", nameWidth) + "│" + padStr("IP", ipWidth) + "│" + padStr("Status", statusWidth) + "│"
-	sep := "├" + repStr("─", nameWidth) + "┼" + repStr("─", ipWidth) + "┼" + repStr("─", statusWidth) + "┤"
-	bottom := "└" + repStr("─", nameWidth) + "┴" + repStr("─", ipWidth) + "┴" + repStr("─", statusWidth) + "┘"
+	top := "┌" + repStr("─", nameWidth) + "┬" + repStr("─", ipWidth) + "┬" + repStr("─", statusWidth) + "┬" + repStr("─", routeWidth) + "┐"
+	header := "│" + padStr("Name", nameWidth) + "│" + padStr("IP", ipWidth) + "│" + padStr("Status", statusWidth) + "│" + padStr("Route", routeWidth) + "│"
+	sep := "├" + repStr("─", nameWidth) + "┼" + repStr("─", ipWidth) + "┼" + repStr("─", statusWidth) + "┼" + repStr("─", routeWidth) + "┤"
+	bottom := "└" + repStr("─", nameWidth) + "┴" + repStr("─", ipWidth) + "┴" + repStr("─", statusWidth) + "┴" + repStr("─", routeWidth) + "┘"
 
 	fmt.Println(top)
 	fmt.Println(header)
@@ -190,14 +206,35 @@ func lsCmd() {
 		}
 
 		statusColor := colorGreen
-		switch e.Status {
-		case "offline":
-			statusColor = colorRed
-		case "probing", "connecting", "idle":
-			statusColor = colorYellow
+		if isLocal {
+			statusColor = rowColor
+		} else {
+			switch e.Status {
+			case "offline":
+				statusColor = colorRed
+			case "probing", "connecting", "idle", "reconnecting":
+				statusColor = colorYellow
+			}
 		}
 
-		row := "│" + rowColor + padStr(e.Name, nameWidth) + colorReset + "│" + rowColor + padStr(e.IP, ipWidth) + colorReset + "│" + statusColor + padStr(e.Status, statusWidth) + colorReset + "│"
+		route := "-"
+		routeColor := colorReset
+		if isLocal {
+			route = "local"
+			routeColor = rowColor
+		} else if m, ok := routeByIP[e.IP]; ok {
+			route = m
+			if m == "p2p" {
+				routeColor = colorGreen
+			} else {
+				routeColor = colorYellow
+			}
+		} else if e.IP == serverVPNIP {
+			route = "p2p"
+			routeColor = colorGreen
+		}
+
+		row := "│" + rowColor + padStr(e.Name, nameWidth) + colorReset + "│" + rowColor + padStr(e.IP, ipWidth) + colorReset + "│" + statusColor + padStr(e.Status, statusWidth) + colorReset + "│" + routeColor + padStr(route, routeWidth) + colorReset + "│"
 		fmt.Println(row)
 	}
 	fmt.Println(bottom)
@@ -208,11 +245,12 @@ func repStr(s string, n int) string {
 }
 
 func padStr(s string, w int) string {
-	if len(s) >= w {
+	sw := runewidth.StringWidth(s)
+	if sw >= w {
 		return " " + s + " "
 	}
-	left := (w - len(s)) / 2
-	right := w - len(s) - left
+	left := (w - sw) / 2
+	right := w - sw - left
 	return repStr(" ", left) + s + repStr(" ", right)
 }
 

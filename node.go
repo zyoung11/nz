@@ -270,8 +270,8 @@ func (n *node) routeOutboundPacket(raw []byte) {
 
 	peer := n.peers.get(dstIP)
 
-	if peer != nil && peer.state == peerConnected {
-		encData, err := encrypt(peer.sendKey, raw)
+	if peer != nil && peer.state == peerConnected && (dstIP == serverVPNAddr || time.Since(peer.lastSeen) < p2pStaleTimeout) {
+		encData, err := encrypt(peer.sendKey, marshalData(n.vpnIP, raw))
 		if err != nil {
 			return
 		}
@@ -285,6 +285,11 @@ func (n *node) routeOutboundPacket(raw []byte) {
 	}
 
 	if peer != nil && peer.realAddr.IsValid() {
+		if peer.state == peerConnected {
+			logWarn("%v P2P stale, falling back to relay and re-probing", dstIP)
+			n.peers.setPunching(dstIP, peer.realAddr)
+			n.requestPeerInfo(dstIP)
+		}
 		switch n.routeMode {
 		case "p2p":
 			go n.punchPeer(dstIP, peer.realAddr)
@@ -305,7 +310,7 @@ func (n *node) routeOutboundPacket(raw []byte) {
 }
 
 func (n *node) sendRelayPacket(targetIP netip.Addr, data []byte) {
-	relayPayload := marshalRelayData(targetIP, data)
+	relayPayload := marshalRelayData(n.vpnIP, targetIP, data)
 	encPayload, err := encrypt(n.key, relayPayload)
 	if err != nil {
 		return
@@ -520,6 +525,9 @@ func (n *node) handlePeerHelloReply(payload []byte, remote netip.AddrPort) {
 
 func (n *node) handleKeepAlive(payload []byte, remote netip.AddrPort) {
 	if remote == n.serverAddr {
+		if p := n.peers.get(serverVPNAddr); p != nil {
+			p.lastSeen = time.Now()
+		}
 		return
 	}
 
@@ -527,6 +535,11 @@ func (n *node) handleKeepAlive(payload []byte, remote netip.AddrPort) {
 		if p := n.peers.get(ip); p != nil {
 			if p.realAddr != remote {
 				n.peers.setConnected(ip, remote)
+				if p := n.peers.get(ip); p != nil {
+					p.sendKey = n.key
+					p.recvKey = n.key
+				}
+				logWarn("peer address drifted, corrected: %v -> %v", ip, remote)
 			} else {
 				p.lastSeen = time.Now()
 			}
@@ -540,34 +553,73 @@ func (n *node) handleKeepAlive(payload []byte, remote netip.AddrPort) {
 }
 
 func (n *node) handlePing(remote netip.AddrPort) {
-	pongMsg := marshalMessage(message{Type: msgPong, Payload: n.vpnIP.AsSlice()})
+	peers := n.peers.all()
+	payload := make([]byte, 5+5*len(peers))
+	copy(payload[0:4], n.vpnIP.AsSlice())
+	idx := 4
+	count := 0
+	for _, p := range peers {
+		if p.vpnIP == serverVPNAddr {
+			continue
+		}
+		mode := routeRelay
+		if p.state == peerConnected && time.Since(p.lastSeen) < p2pStaleTimeout {
+			mode = routeP2P
+		}
+		copy(payload[idx:idx+4], p.vpnIP.AsSlice())
+		payload[idx+4] = mode
+		idx += 5
+		count++
+	}
+	payload[4] = byte(count)
+	payload = payload[:5+5*count]
+
+	pongMsg := marshalMessage(message{Type: msgPong, Payload: payload})
 	addr := net.UDPAddrFromAddrPort(remote)
 	n.conn.WriteToUDP(pongMsg, addr)
 }
 
 func (n *node) handleData(payload []byte, remote netip.AddrPort) {
-	peer := n.peers.getByReal(remote)
-	if peer == nil {
-		logError("received data from unknown peer: %v", remote)
-		return
+	key := n.key
+	if peer := n.peers.getByReal(remote); peer != nil {
+		key = peer.recvKey
 	}
 
-	decData, err := decrypt(peer.recvKey, payload)
+	decData, err := decrypt(key, payload)
 	if err != nil {
 		logError("decrypt failed: %v", err)
 		return
 	}
 
-	_, err = n.tun.Write(decData)
+	srcIP, data, err := unmarshalData(decData)
 	if err != nil {
-		logError("TUN write failed: %v", err)
 		return
 	}
 
-	peer.lastSeen = time.Now()
-	if peer.state != peerConnected {
-		n.peers.setConnected(peer.vpnIP, remote)
-		logSuccess("P2P restored: %v ↔ %v", n.vpnIP, peer.vpnIP)
+	if srcIP == n.vpnIP {
+		return
+	}
+
+	peer := n.peers.get(srcIP)
+	if peer == nil {
+		logError("data from unknown peer: %v (%v)", srcIP, remote)
+		return
+	}
+
+	if peer.realAddr != remote || peer.state != peerConnected {
+		n.peers.setConnected(srcIP, remote)
+		if p := n.peers.get(srcIP); p != nil {
+			p.sendKey = n.key
+			p.recvKey = n.key
+		}
+		logWarn("peer address drifted, corrected: %v -> %v", srcIP, remote)
+	} else {
+		peer.lastSeen = time.Now()
+	}
+
+	_, err = n.tun.Write(data)
+	if err != nil {
+		logError("TUN write failed: %v", err)
 	}
 }
 
@@ -577,7 +629,7 @@ func (n *node) handleRelayData(payload []byte, _ netip.AddrPort) {
 		return
 	}
 
-	srcIP, data, err := unmarshalRelayData(decPayload)
+	srcIP, _, data, err := unmarshalRelayData(decPayload)
 	if err != nil {
 		return
 	}
@@ -613,17 +665,24 @@ func (n *node) peerKeepAliveLoop() {
 		}
 		now := time.Now()
 		for _, p := range n.peers.all() {
-			if p.vpnIP == serverVPNAddr || p.state != peerConnected {
+			if p.vpnIP == serverVPNAddr {
 				continue
 			}
-			kaMsg := marshalMessage(message{Type: msgKeepAlive, Payload: n.vpnIP.AsSlice()})
-			addr := net.UDPAddrFromAddrPort(p.realAddr)
-			n.conn.WriteToUDP(kaMsg, addr)
+			switch p.state {
+			case peerConnected:
+				kaMsg := marshalMessage(message{Type: msgKeepAlive, Payload: n.vpnIP.AsSlice()})
+				addr := net.UDPAddrFromAddrPort(p.realAddr)
+				n.conn.WriteToUDP(kaMsg, addr)
 
-			if now.Sub(p.lastSeen) > p2pStaleTimeout {
-				logWarn("%v P2P stale (%v), falling back to relay and re-probing", p.vpnIP, p.realAddr)
-				n.peers.setPunching(p.vpnIP, p.realAddr)
-				n.requestPeerInfo(p.vpnIP)
+				if now.Sub(p.lastSeen) > p2pStaleTimeout {
+					logWarn("%v P2P stale (%v), falling back to relay and re-probing", p.vpnIP, p.realAddr)
+					n.peers.setPunching(p.vpnIP, p.realAddr)
+					n.requestPeerInfo(p.vpnIP)
+				}
+			case peerPunching:
+				if now.Sub(p.punchStart) > punchTimeout {
+					n.requestPeerInfo(p.vpnIP)
+				}
 			}
 		}
 	}

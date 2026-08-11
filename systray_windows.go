@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -17,6 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/getlantern/systray"
+	"golang.org/x/sys/windows"
 )
 
 //go:embed nz.ico
@@ -41,7 +43,6 @@ type systrayState struct {
 func runSystray() {
 	cfg, err := loadConfig(defaultConfigPath())
 	if err != nil {
-		logToFile("config error: %v", err)
 		return
 	}
 
@@ -52,21 +53,35 @@ func runSystray() {
 
 	go state.runBackground()
 	go state.pollStatus()
+	go waitShutdownSignal()
 
-	logToFile("entering systray.Run")
 	systray.Run(state.onReady, state.onExit)
-	logToFile("systray.Run returned")
 }
 
-func logToFile(format string, args ...any) {
-	exe, _ := os.Executable()
-	logPath := filepath.Join(filepath.Dir(exe), "nz-startup.log")
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+func waitShutdownSignal() {
+	h, err := createShutdownEvent()
 	if err != nil {
 		return
 	}
-	defer f.Close()
-	fmt.Fprintf(f, time.Now().Format("2006-01-02 15:04:05")+" "+format+"\n", args...)
+	defer windows.CloseHandle(h)
+	windows.WaitForSingleObject(h, windows.INFINITE)
+	systray.Quit()
+}
+
+func createShutdownEvent() (windows.Handle, error) {
+	name, err := windows.UTF16PtrFromString(shutdownEventName)
+	if err != nil {
+		return 0, err
+	}
+	sd, err := windows.SecurityDescriptorFromString("D:P(A;;0x0002;;;WD)S:(ML;;NW;;;LW)")
+	if err != nil {
+		return 0, err
+	}
+	sa := &windows.SecurityAttributes{
+		Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
+		SecurityDescriptor: sd,
+	}
+	return windows.CreateEvent(sa, 1, 0, name)
 }
 
 func hideConsole() {
@@ -133,12 +148,13 @@ table{border-collapse:collapse}
 th,td{padding:8px 20px;text-align:center}
 th{color:#8aadf4;border-bottom:1px solid #444}
 td{border-bottom:1px solid #333}
-.online{color:#a6da95}.offline{color:#ed8796}.idle{color:#eed49f}.probing{color:#eed49f}.connecting{color:#eed49f}
+.online{color:#a6da95}.offline{color:#ed8796}.idle{color:#eed49f}.probing{color:#eed49f}.connecting{color:#eed49f}.reconnecting{color:#eed49f}
+.p2p{color:#a6da95}.relay{color:#eed49f}.local{color:#8aadf4}
 </style></head>
 <body>
 <div id="table">loading...</div>
 <script>
-async function load(){let r=await fetch('/api/table');let d=await r.json();let h='<table><tr><th>Name</th><th>IP</th><th>Status</th></tr>';d.forEach(p=>{h+='<tr><td>'+p.name+'</td><td>'+p.ip+'</td><td class='+p.status+'>'+p.status+'</td></tr>'});h+='</table>';document.getElementById('table').innerHTML=h}
+async function load(){let r=await fetch('/api/table');let d=await r.json();let h='<table><tr><th>Name</th><th>IP</th><th>Status</th><th>Route</th></tr>';d.forEach(p=>{let lc=p.route=='local';let c=lc?'class="local"':'';h+='<tr><td '+c+'>'+p.name+'</td><td '+c+'>'+p.ip+'</td><td '+(lc?'class="local"':'class='+p.status)+'>'+p.status+'</td><td class='+(lc?'local':p.route)+'>'+p.route+'</td></tr>'});h+='</table>';document.getElementById('table').innerHTML=h}
 load();setInterval(load,5000)
 </script></body></html>`)
 }
@@ -157,16 +173,18 @@ func (s *systrayState) apiTableHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 type webPeerEntry struct {
-	Name   string `json:"name"`
-	IP     string `json:"ip"`
-	Status string `json:"status"`
+	Name   string            `json:"name"`
+	IP     string            `json:"ip"`
+	Status string            `json:"status"`
+	Routes map[string]string `json:"routes"`
+	Route  string            `json:"route"`
 }
 
 func (s *systrayState) queryPeerList() []webPeerEntry {
 	var list []webPeerEntry
 
 	if s.cfg.Mode == "server" {
-		list = append(list, webPeerEntry{Name: s.cfg.Name, IP: "192.168.100.1", Status: "online"})
+		list = append(list, webPeerEntry{Name: s.cfg.Name, IP: "192.168.100.1", Status: "online", Route: "local"})
 		state, err := loadServerState(s.cfg.Password, defaultConfigPath())
 		if err == nil {
 			for _, n := range state.Nodes {
@@ -175,7 +193,7 @@ func (s *systrayState) queryPeerList() []webPeerEntry {
 				if serviceRunning {
 					status = "idle"
 				}
-				list = append(list, webPeerEntry{Name: n.Name, IP: ip.String(), Status: status})
+				list = append(list, webPeerEntry{Name: n.Name, IP: ip.String(), Status: status, Route: "p2p"})
 			}
 		}
 		return list
@@ -213,6 +231,25 @@ func (s *systrayState) queryPeerList() []webPeerEntry {
 	}
 
 	json.Unmarshal(decData, &list)
+
+	routeByIP := map[string]string{}
+	for _, e := range list {
+		if e.Name == s.cfg.Name {
+			maps.Copy(routeByIP, e.Routes)
+			break
+		}
+	}
+	for i := range list {
+		if list[i].Name == s.cfg.Name {
+			list[i].Route = "local"
+		} else if m, ok := routeByIP[list[i].IP]; ok {
+			list[i].Route = m
+		} else if list[i].IP == serverVPNIP {
+			list[i].Route = "p2p"
+		} else {
+			list[i].Route = "-"
+		}
+	}
 	return list
 }
 
@@ -336,7 +373,9 @@ func setAutoStart(enabled bool) error {
 		}
 	} else {
 		cmd := exec.Command("schtasks", "/Delete", "/TN", taskName, "/F")
-		cmd.Run()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("schtasks delete failed: %v (output: %s)", err, string(out))
+		}
 	}
 	return nil
 }

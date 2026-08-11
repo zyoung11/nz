@@ -3,11 +3,17 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"time"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
+
+const shutdownEventName = "nz-shutdown-event-v1"
 
 func initWintun() error {
 	exePath, err := os.Executable()
@@ -30,27 +36,58 @@ func installService() error {
 		oldKey.Close()
 	}
 
-	enabled, _ := isAutoStartEnabled()
-	if enabled {
-		logWarn("auto-start already enabled")
-		return nil
-	}
+	stopRunningInstance()
+
 	if err := setAutoStart(true); err != nil {
 		return err
 	}
-	logSuccess("auto-start enabled (task scheduler)")
+
+	cmd := exec.Command("schtasks", "/Run", "/TN", "nz")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("schtasks run failed: %v (output: %s)", err, string(out))
+	}
+	logSuccess("auto-start enabled and started (task scheduler)")
 	return nil
 }
 
 func uninstallService() error {
 	enabled, _ := isAutoStartEnabled()
-	if !enabled {
-		logWarn("auto-start not enabled")
-		return nil
+	if enabled {
+		if err := setAutoStart(false); err != nil {
+			return err
+		}
 	}
-	if err := setAutoStart(false); err != nil {
-		return err
-	}
-	logSuccess("auto-start disabled")
+
+	stopRunningInstance()
+
+	logSuccess("auto-start disabled and stopped")
 	return nil
+}
+
+func signalShutdown() bool {
+	name, err := windows.UTF16PtrFromString(shutdownEventName)
+	if err != nil {
+		return false
+	}
+	h, err := windows.OpenEvent(windows.EVENT_MODIFY_STATE, false, name)
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(h)
+	return windows.SetEvent(h) == nil
+}
+
+func stopRunningInstance() {
+	for range 20 {
+		if !signalShutdown() {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	killLeftoverInstances()
+}
+
+func killLeftoverInstances() {
+	exec.Command("taskkill", "/IM", "nz.exe", "/F", "/FI", fmt.Sprintf("PID ne %d", os.Getpid())).Run()
+	time.Sleep(500 * time.Millisecond)
 }

@@ -75,6 +75,7 @@ Nodes can now reach each other on `192.168.100.x` — ping, SSH, or any TCP/UDP 
 `ls` output shows a Unicode table with each node's name, VPN IP, and status:
 - `online` — connected, heartbeats active
 - `idle` — connected, no recent heartbeat
+- `reconnecting` — server↔node alive but node reported stale P2P peers; `ls` actively re-probes them
 - `probing` — server testing if node is alive
 - `offline` — not connected
 
