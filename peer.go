@@ -16,15 +16,16 @@ const (
 )
 
 type peer struct {
-	vpnIP      netip.Addr
-	realAddr   netip.AddrPort
-	state      peerState
-	lastSeen   time.Time
-	sendKey    []byte
-	recvKey    []byte
-	punchStart time.Time
-	punchCount int
-	probeSent  time.Time
+	vpnIP        netip.Addr
+	realAddr     netip.AddrPort
+	state        peerState
+	lastSeen     time.Time
+	lastP2PSeen  time.Time
+	sendKey      []byte
+	recvKey      []byte
+	punchStart   time.Time
+	punchCount   int
+	probeSent    time.Time
 }
 
 type peerMap struct {
@@ -62,9 +63,10 @@ func (pm *peerMap) getOrAdd(vpnIP netip.Addr) *peer {
 	}
 
 	p := &peer{
-		vpnIP:    vpnIP,
-		state:    peerDisconnected,
-		lastSeen: time.Now(),
+		vpnIP:       vpnIP,
+		state:       peerDisconnected,
+		lastSeen:    time.Now(),
+		lastP2PSeen: time.Time{},
 	}
 	pm.peers[vpnIP] = p
 	return p
@@ -85,7 +87,9 @@ func (pm *peerMap) updateAddr(vpnIP netip.Addr, realAddr netip.AddrPort, state p
 	}
 	p.realAddr = realAddr
 	p.state = state
-	p.lastSeen = time.Now()
+	now := time.Now()
+	p.lastSeen = now
+	p.lastP2PSeen = now
 	pm.byRealIP[realAddr] = p
 }
 
@@ -124,7 +128,9 @@ func (pm *peerMap) setConnected(vpnIP netip.Addr, realAddr netip.AddrPort) {
 	}
 	p.realAddr = realAddr
 	p.state = peerConnected
-	p.lastSeen = time.Now()
+	now := time.Now()
+	p.lastSeen = now
+	p.lastP2PSeen = now
 	p.punchCount = 0
 	pm.byRealIP[realAddr] = p
 }
@@ -148,4 +154,18 @@ func (pm *peerMap) all() []*peer {
 		result = append(result, p)
 	}
 	return result
+}
+
+func (p *peer) updateP2PSeen() {
+	now := time.Now()
+	 p.lastSeen = now
+	 p.lastP2PSeen = now
+}
+
+func (p *peer) updateRelaySeen() {
+	 p.lastSeen = time.Now()
+}
+
+func (p *peer) isP2PActive() bool {
+	return p.state == peerConnected && time.Since(p.lastP2PSeen) < p2pStaleTimeout
 }

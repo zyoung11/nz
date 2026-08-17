@@ -446,7 +446,7 @@ func (s *server) routeOutboundPacket(raw []byte) {
 	}
 
 	peer := s.peers.get(dstIP)
-	if peer != nil && peer.realAddr.IsValid() && peer.state == peerConnected && time.Since(peer.lastSeen) < p2pStaleTimeout {
+	if peer != nil && peer.realAddr.IsValid() && peer.isP2PActive() {
 		encData, err := encrypt(s.key, marshalData(s.vpnIP, raw))
 		if err != nil {
 			return
@@ -506,7 +506,7 @@ func (s *server) heartbeatCheck(ctx context.Context) {
 			for _, p := range s.peers.all() {
 				switch p.state {
 				case peerConnected:
-					if now.Sub(p.lastSeen) > 90*time.Second {
+					if !p.isP2PActive() {
 						p.state = peerProbing
 						p.probeSent = now
 						logWarn("%v (%v) heartbeat lost, probing", p.vpnIP, p.realAddr)
@@ -557,7 +557,7 @@ func (s *server) handlePong(payload []byte) {
 	ip := netip.AddrFrom4(ip4)
 
 	if p := s.peers.get(ip); p != nil {
-		p.lastSeen = time.Now()
+		p.updateP2PSeen()
 	}
 
 	count := int(payload[4])
