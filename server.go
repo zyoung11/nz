@@ -136,6 +136,8 @@ func (s *server) handleMessage(msg message, remote netip.AddrPort) {
 		s.handleRelayData(msg.Payload, remote)
 	case msgKeepAlive:
 		s.handleKeepAlive(msg.Payload, remote)
+	case msgRouteReport:
+		s.handleRouteReport(msg.Payload, remote)
 	case msgError:
 	}
 }
@@ -613,7 +615,40 @@ func (s *server) handleDisconnect(remote netip.AddrPort) {
 	peer := s.peers.getByReal(remote)
 	if peer != nil {
 		peer.state = peerDisconnected
-		logInfo("%v (%v) disconnected", peer.vpnIP, peer.realAddr)
+		peer.realAddr = netip.AddrPort{}
+		logInfo("%v (%v) disconnected", peer.vpnIP, remote)
+	}
+}
+
+func (s *server) handleRouteReport(payload []byte, remote netip.AddrPort) {
+	decPayload, err := decrypt(s.key, payload)
+	if err != nil {
+		return
+	}
+
+	type routeEntry struct {
+		IP   string `json:"ip"`
+		Mode string `json:"mode"`
+	}
+	var entries []routeEntry
+	if err := json.Unmarshal(decPayload, &entries); err != nil {
+		return
+	}
+
+	reporter := s.peers.getByReal(remote)
+	if reporter == nil {
+		return
+	}
+
+	if s.peerRoutes[reporter.vpnIP] == nil {
+		s.peerRoutes[reporter.vpnIP] = make(map[netip.Addr]string)
+	}
+	for _, e := range entries {
+		ip, err := netip.ParseAddr(e.IP)
+		if err != nil {
+			continue
+		}
+		s.peerRoutes[reporter.vpnIP][ip] = e.Mode
 	}
 }
 
@@ -624,33 +659,17 @@ func (s *server) handlePeerList(payload []byte, remote netip.AddrPort) {
 	}
 
 	type peerEntry struct {
-		Name   string            `json:"name"`
-		IP     string            `json:"ip"`
-		Status string            `json:"status"`
-		Routes map[string]string `json:"routes,omitempty"`
+		Name   string `json:"name"`
+		IP     string `json:"ip"`
+		Status string `json:"status"`
 	}
 
 	var list []peerEntry
 
-	serverRoutes := make(map[string]string)
-	for _, p := range s.peers.all() {
-		if p.state == peerConnected {
-			serverRoutes[p.vpnIP.String()] = "p2p"
-		}
-	}
-	list = append(list, peerEntry{Name: s.name, IP: s.vpnIP.String(), Status: "online", Routes: serverRoutes})
+	list = append(list, peerEntry{Name: s.name, IP: s.vpnIP.String(), Status: "online"})
 
 	s.staleReported = make(map[netip.Addr]bool)
 	s.peerRoutes = make(map[netip.Addr]map[netip.Addr]string)
-
-	for _, p := range s.peers.all() {
-		if p.state == peerConnected && p.realAddr.IsValid() {
-			pingMsg := marshalMessage(message{Type: msgPing, Payload: s.vpnIP.AsSlice()})
-			addr := net.UDPAddrFromAddrPort(p.realAddr)
-			s.conn.WriteToUDP(pingMsg, addr)
-		}
-	}
-	time.Sleep(500 * time.Millisecond)
 
 	now := time.Now()
 	s.state.mu.Lock()
@@ -660,10 +679,11 @@ func (s *server) handlePeerList(payload []byte, remote netip.AddrPort) {
 		if p := s.peers.get(ip); p != nil {
 			switch p.state {
 			case peerConnected:
-				if now.Sub(p.lastSeen) < 90*time.Second {
+				if now.Sub(p.lastSeen) < 15*time.Second {
 					status = "online"
 				} else {
-					status = "idle"
+					status = "offline"
+					s.peers.remove(ip)
 				}
 			case peerProbing:
 				status = "probing"
@@ -674,29 +694,7 @@ func (s *server) handlePeerList(payload []byte, remote netip.AddrPort) {
 		if s.staleReported[ip] {
 			status = "reconnecting"
 		}
-		routes := make(map[string]string)
-		for peerIP, mode := range s.peerRoutes[ip] {
-			routes[peerIP.String()] = mode
-		}
-		for _, m := range s.state.Nodes {
-			otherIP, _ := netip.ParseAddr(m.VPNIP)
-			if otherIP == ip {
-				continue
-			}
-			if _, ok := routes[otherIP.String()]; ok {
-				continue
-			}
-			otherPeer := s.peers.get(otherIP)
-			if otherPeer == nil || otherPeer.state != peerConnected || now.Sub(otherPeer.lastSeen) > 90*time.Second {
-				continue
-			}
-			if t, ok := s.relayActivity[pairKey(ip, otherIP)]; ok && now.Sub(t) < relayActivityWindow {
-				routes[otherIP.String()] = "relay"
-			} else {
-				routes[otherIP.String()] = "p2p"
-			}
-		}
-		list = append(list, peerEntry{Name: n.Name, IP: n.VPNIP, Status: status, Routes: routes})
+		list = append(list, peerEntry{Name: n.Name, IP: n.VPNIP, Status: status})
 	}
 	s.state.mu.Unlock()
 

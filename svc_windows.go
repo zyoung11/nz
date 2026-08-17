@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -90,4 +91,12 @@ func stopRunningInstance() {
 func killLeftoverInstances() {
 	exec.Command("taskkill", "/IM", "nz.exe", "/F", "/FI", fmt.Sprintf("PID ne %d", os.Getpid())).Run()
 	time.Sleep(500 * time.Millisecond)
+}
+
+func isServiceRunning(mode string) bool {
+	out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq nz.exe", "/FO", "CSV", "/NH").Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "nz.exe")
 }

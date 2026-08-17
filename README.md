@@ -2,7 +2,7 @@
 
 A compact overlay network tool for personal use — connect your own devices into a virtual LAN.
 Single binary, config-file driven. Password-only auth, NAT hole-punching with relay fallback.
-Runs on **Linux** and **Windows**.
+Runs on **Linux**, **Windows**, and **Android**.
 
 Forked and simplified from [Slack's Nebula](https://github.com/slackhq/nebula).
 
@@ -61,6 +61,20 @@ Double-click `nz.exe` to launch the system tray app. Or use CLI:
 
 The tray icon shows online/offline status, opens a web dashboard, and lets you toggle auto-start.
 
+### Android
+
+Download the APK from [GitHub Releases](https://github.com/zyoung11/nz/releases) or build from source:
+
+```bash
+cd mobile_nz
+flutter build apk --release --target-platform android-arm64
+```
+
+Install and configure with your server address and password. The app provides:
+- VPN toggle with connecting/disconnecting status
+- Node list view
+- Auto-reconnect on network change
+
 Nodes can now reach each other on `192.168.100.x` — ping, SSH, or any TCP/UDP service.
 
 ## CLI
@@ -73,11 +87,8 @@ Nodes can now reach each other on `192.168.100.x` — ping, SSH, or any TCP/UDP 
 ```
 
 `ls` output shows a Unicode table with each node's name, VPN IP, and status:
-- `online` — connected, heartbeats active
-- `idle` — connected, no recent heartbeat
-- `reconnecting` — server↔node alive but node reported stale P2P peers; `ls` actively re-probes them
-- `probing` — server testing if node is alive
-- `offline` — not connected
+- `online` — connected, heartbeat received within 15s
+- `offline` — not connected (no heartbeat for 15s+)
 
 The local machine's row is highlighted.
 

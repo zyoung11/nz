@@ -139,7 +139,7 @@ func (s *systrayState) dashboardHandler(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, `<!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><title>nz ls</title>
+<head><meta charset="utf-8"><title>Devices</title>
 <link rel="icon" href="/favicon.ico">
 <style>
 body{background:#1e1e1e;color:#ddd;font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0}
@@ -154,7 +154,7 @@ td{border-bottom:1px solid #333}
 <body>
 <div id="table">loading...</div>
 <script>
-async function load(){let r=await fetch('/api/table');let d=await r.json();let h='<table><tr><th>Name</th><th>IP</th><th>Status</th><th>Route</th></tr>';d.forEach(p=>{let lc=p.route=='local';let c=lc?'class="local"':'';h+='<tr><td '+c+'>'+p.name+'</td><td '+c+'>'+p.ip+'</td><td '+(lc?'class="local"':'class='+p.status)+'>'+p.status+'</td><td class='+(lc?'local':p.route)+'>'+p.route+'</td></tr>'});h+='</table>';document.getElementById('table').innerHTML=h}
+async function load(){let r=await fetch('/api/table');let d=await r.json();let h='<table><tr><th>Name</th><th>IP</th><th>Status</th></tr>';d.forEach(p=>{let lc=p.status=='local';let c=lc?'class="local"':'';h+='<tr><td '+c+'>'+p.name+'</td><td '+c+'>'+p.ip+'</td><td '+(lc?'class="local"':'class='+p.status)+'>'+p.status+'</td></tr>'});h+='</table>';document.getElementById('table').innerHTML=h}
 load();setInterval(load,5000)
 </script></body></html>`)
 }
@@ -173,11 +173,9 @@ func (s *systrayState) apiTableHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 type webPeerEntry struct {
-	Name   string            `json:"name"`
-	IP     string            `json:"ip"`
-	Status string            `json:"status"`
-	Routes map[string]string `json:"routes"`
-	Route  string            `json:"route"`
+	Name   string `json:"name"`
+	IP     string `json:"ip"`
+	Status string `json:"status"`
 }
 
 func (s *systrayState) queryPeerList() []webPeerEntry {
@@ -193,7 +191,7 @@ func (s *systrayState) queryPeerList() []webPeerEntry {
 				if serviceRunning {
 					status = "idle"
 				}
-				list = append(list, webPeerEntry{Name: n.Name, IP: ip.String(), Status: status, Route: "p2p"})
+				list = append(list, webPeerEntry{Name: n.Name, IP: ip.String(), Status: status})
 			}
 		}
 		return list
@@ -232,24 +230,6 @@ func (s *systrayState) queryPeerList() []webPeerEntry {
 
 	json.Unmarshal(decData, &list)
 
-	routeByIP := map[string]string{}
-	for _, e := range list {
-		if e.Name == s.cfg.Name {
-			maps.Copy(routeByIP, e.Routes)
-			break
-		}
-	}
-	for i := range list {
-		if list[i].Name == s.cfg.Name {
-			list[i].Route = "local"
-		} else if m, ok := routeByIP[list[i].IP]; ok {
-			list[i].Route = m
-		} else if list[i].IP == serverVPNIP {
-			list[i].Route = "p2p"
-		} else {
-			list[i].Route = "-"
-		}
-	}
 	return list
 }
 

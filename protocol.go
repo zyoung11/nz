@@ -30,6 +30,7 @@ const (
 	msgDisconnect   msgType = 0x14
 	msgPing         msgType = 0x15
 	msgPong         msgType = 0x16
+	msgRouteReport  msgType = 0x17
 	msgData         msgType = 0x20
 	msgKeepAlive    msgType = 0x0E
 	msgRelayData    msgType = 0x30

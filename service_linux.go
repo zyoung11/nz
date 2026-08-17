@@ -84,3 +84,24 @@ func serviceStatus() error {
 	logSuccess("status: %s", status)
 	return nil
 }
+
+func isServiceRunning(mode string) bool {
+	out, err := exec.Command("systemctl", "is-active", serviceName).Output()
+	if err == nil && strings.TrimSpace(string(out)) == "active" {
+		return true
+	}
+
+	pgrepOut, err := exec.Command("pgrep", "-x", "nz").Output()
+	if err != nil || len(strings.TrimSpace(string(pgrepOut))) == 0 {
+		return false
+	}
+
+	currentPID := os.Getpid()
+	for _, line := range strings.Split(strings.TrimSpace(string(pgrepOut)), "\n") {
+		pid := strings.TrimSpace(line)
+		if pid != fmt.Sprintf("%d", currentPID) {
+			return true
+		}
+	}
+	return false
+}

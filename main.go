@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"maps"
 	"net"
 	"net/netip"
 	"os"
@@ -100,6 +99,11 @@ func lsCmd() {
 		os.Exit(1)
 	}
 
+	if !isServiceRunning(cfg.Mode) {
+		logError("nz is not running (use 'nz install' or 'nz run' first)")
+		os.Exit(1)
+	}
+
 	key := sharedKey(cfg.Password)
 
 	var serverAddr netip.AddrPort
@@ -149,28 +153,16 @@ func lsCmd() {
 	}
 
 	type peerEntry struct {
-		Name   string            `json:"name"`
-		IP     string            `json:"ip"`
-		Status string            `json:"status"`
-		Routes map[string]string `json:"routes"`
+		Name   string `json:"name"`
+		IP     string `json:"ip"`
+		Status string `json:"status"`
 	}
 	var list []peerEntry
 	json.Unmarshal(decData, &list)
 
 	localName := cfg.Name
 
-	routeByIP := map[string]string{}
-	for i, e := range list {
-		isLocal := i > 0 && e.Name == localName
-		if cfg.Mode == "server" {
-			isLocal = i == 0
-		}
-		if isLocal {
-			maps.Copy(routeByIP, e.Routes)
-		}
-	}
-
-	nameWidth, ipWidth, statusWidth, routeWidth := 4, 2, 6, 5
+	nameWidth, ipWidth, statusWidth := 4, 2, 6
 	for _, e := range list {
 		if runewidth.StringWidth(e.Name) > nameWidth {
 			nameWidth = runewidth.StringWidth(e.Name)
@@ -185,12 +177,11 @@ func lsCmd() {
 	nameWidth += 2
 	ipWidth += 2
 	statusWidth += 2
-	routeWidth += 2
 
-	top := "┌" + repStr("─", nameWidth) + "┬" + repStr("─", ipWidth) + "┬" + repStr("─", statusWidth) + "┬" + repStr("─", routeWidth) + "┐"
-	header := "│" + padStr("Name", nameWidth) + "│" + padStr("IP", ipWidth) + "│" + padStr("Status", statusWidth) + "│" + padStr("Route", routeWidth) + "│"
-	sep := "├" + repStr("─", nameWidth) + "┼" + repStr("─", ipWidth) + "┼" + repStr("─", statusWidth) + "┼" + repStr("─", routeWidth) + "┤"
-	bottom := "└" + repStr("─", nameWidth) + "┴" + repStr("─", ipWidth) + "┴" + repStr("─", statusWidth) + "┴" + repStr("─", routeWidth) + "┘"
+	top := "┌" + repStr("─", nameWidth) + "┬" + repStr("─", ipWidth) + "┬" + repStr("─", statusWidth) + "┐"
+	header := "│" + padStr("Name", nameWidth) + "│" + padStr("IP", ipWidth) + "│" + padStr("Status", statusWidth) + "│"
+	sep := "├" + repStr("─", nameWidth) + "┼" + repStr("─", ipWidth) + "┼" + repStr("─", statusWidth) + "┤"
+	bottom := "└" + repStr("─", nameWidth) + "┴" + repStr("─", ipWidth) + "┴" + repStr("─", statusWidth) + "┘"
 
 	fmt.Println(top)
 	fmt.Println(header)
@@ -217,24 +208,7 @@ func lsCmd() {
 			}
 		}
 
-		route := "-"
-		routeColor := colorReset
-		if isLocal {
-			route = "local"
-			routeColor = rowColor
-		} else if m, ok := routeByIP[e.IP]; ok {
-			route = m
-			if m == "p2p" {
-				routeColor = colorGreen
-			} else {
-				routeColor = colorYellow
-			}
-		} else if e.IP == serverVPNIP {
-			route = "p2p"
-			routeColor = colorGreen
-		}
-
-		row := "│" + rowColor + padStr(e.Name, nameWidth) + colorReset + "│" + rowColor + padStr(e.IP, ipWidth) + colorReset + "│" + statusColor + padStr(e.Status, statusWidth) + colorReset + "│" + routeColor + padStr(route, routeWidth) + colorReset + "│"
+		row := "│" + rowColor + padStr(e.Name, nameWidth) + colorReset + "│" + rowColor + padStr(e.IP, ipWidth) + colorReset + "│" + statusColor + padStr(e.Status, statusWidth) + colorReset + "│"
 		fmt.Println(row)
 	}
 	fmt.Println(bottom)
