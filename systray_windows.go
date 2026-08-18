@@ -6,7 +6,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -182,7 +181,7 @@ func (s *systrayState) queryPeerList() []webPeerEntry {
 	var list []webPeerEntry
 
 	if s.cfg.Mode == "server" {
-		list = append(list, webPeerEntry{Name: s.cfg.Name, IP: "192.168.100.1", Status: "online", Route: "local"})
+		list = append(list, webPeerEntry{Name: s.cfg.Name, IP: "192.168.100.1", Status: "online"})
 		state, err := loadServerState(s.cfg.Password, defaultConfigPath())
 		if err == nil {
 			for _, n := range state.Nodes {
