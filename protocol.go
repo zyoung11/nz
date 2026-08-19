@@ -8,11 +8,6 @@ import (
 
 const protocolVersion byte = 0x02
 
-const (
-	routeP2P   byte = 0
-	routeRelay byte = 1
-)
-
 type msgType byte
 
 const (
@@ -28,9 +23,6 @@ const (
 	msgPeerList     msgType = 0x12
 	msgPeerListRpy  msgType = 0x13
 	msgDisconnect   msgType = 0x14
-	msgPing         msgType = 0x15
-	msgPong         msgType = 0x16
-	msgRouteReport  msgType = 0x17
 	msgData         msgType = 0x20
 	msgKeepAlive    msgType = 0x0E
 	msgRelayData    msgType = 0x30

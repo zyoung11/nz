@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -375,13 +374,11 @@ func (n *node) handleUDPMessage(msg message, remote netip.AddrPort) {
 		n.handlePeerHelloReply(msg.Payload, remote)
 	case msgData:
 		n.handleData(msg.Payload, remote)
-	case msgPing:
-		n.handlePing(remote)
 	case msgRelayData:
 		n.handleRelayData(msg.Payload, remote)
 	case msgKeepAlive:
 		n.handleKeepAlive(msg.Payload, remote)
-	case msgError, msgDisconnect, msgPong:
+	case msgError, msgDisconnect:
 	}
 }
 
@@ -555,32 +552,6 @@ func (n *node) handleKeepAlive(payload []byte, remote netip.AddrPort) {
 	}
 }
 
-func (n *node) handlePing(remote netip.AddrPort) {
-	peers := n.peers.all()
-	payload := make([]byte, 5+5*len(peers))
-	copy(payload[0:4], n.vpnIP.AsSlice())
-	idx := 4
-	count := 0
-	for _, p := range peers {
-		if p.vpnIP == serverVPNAddr {
-			continue
-		}
-		mode := routeRelay
-		if p.isP2PActive() {
-			mode = routeP2P
-		}
-		copy(payload[idx:idx+4], p.vpnIP.AsSlice())
-		payload[idx+4] = mode
-		idx += 5
-		count++
-	}
-	payload[4] = byte(count)
-	payload = payload[:5+5*count]
-
-	pongMsg := marshalMessage(message{Type: msgPong, Payload: payload})
-	addr := net.UDPAddrFromAddrPort(remote)
-	n.conn.WriteToUDP(pongMsg, addr)
-}
 
 func (n *node) handleData(payload []byte, remote netip.AddrPort) {
 	key := n.key
@@ -655,42 +626,9 @@ func (n *node) keepAliveLoop() {
 		}
 		kaMsg := marshalMessage(message{Type: msgKeepAlive, Payload: n.vpnIP.AsSlice()})
 		n.sendToServer(kaMsg)
-
-		// Report route status
-		n.reportRoutes()
 	}
 }
 
-func (n *node) reportRoutes() {
-	type routeEntry struct {
-		IP   string `json:"ip"`
-		Mode string `json:"mode"`
-	}
-
-	var entries []routeEntry
-	for _, p := range n.peers.all() {
-		if p.vpnIP == serverVPNAddr {
-			continue
-		}
-		if p.state != peerConnected {
-			continue
-		}
-		mode := "relay"
-		if p.isP2PActive() {
-			mode = "p2p"
-		}
-		entries = append(entries, routeEntry{IP: p.vpnIP.String(), Mode: mode})
-	}
-
-	if len(entries) == 0 {
-		return
-	}
-
-	data, _ := json.Marshal(entries)
-	encPayload, _ := encrypt(n.key, data)
-	msg := marshalMessage(message{Type: msgRouteReport, Payload: encPayload})
-	n.sendToServer(msg)
-}
 
 func (n *node) peerKeepAliveLoop() {
 	ticker := time.NewTicker(keepAliveInterval)
