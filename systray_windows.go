@@ -241,14 +241,34 @@ func (s *systrayState) apiStatusHandler(w http.ResponseWriter, r *http.Request) 
 	fmt.Fprintf(w, `{"status":"%s","mode":"%s","name":"%s"}`, status, s.cfg.Mode, s.cfg.Name)
 }
 
+// runBackground runs the tunnel and restarts it with exponential backoff after any failure.
 func (s *systrayState) runBackground() {
-	serviceRunning = true
-	if s.cfg.Mode == "server" {
-		runServer(s.cfg.Password, s.cfg.Port, s.cfg.TUN, s.cfg.Name, defaultConfigPath())
-	} else {
-		runNode(s.cfg.Domain, s.cfg.Port, s.cfg.Name, s.cfg.Password, s.cfg.TUN, s.cfg.Route, s.cfg.DesiredIP)
+	const maxRetryDelay = 30 * time.Second
+	const healthyRunTime = 60 * time.Second
+	delay := time.Second
+	for {
+		serviceRunning = true
+		start := time.Now()
+		var err error
+		if s.cfg.Mode == "server" {
+			err = runServer(s.cfg.Password, s.cfg.Port, s.cfg.TUN, s.cfg.Name, defaultConfigPath())
+		} else {
+			err = runNode(s.cfg.Domain, s.cfg.Port, s.cfg.Name, s.cfg.Password, s.cfg.TUN, s.cfg.Route, s.cfg.DesiredIP)
+		}
+		serviceRunning = false
+		if err != nil {
+			logWarn("tunnel exited: %v", err)
+		}
+		if time.Since(start) >= healthyRunTime {
+			delay = time.Second
+		}
+		logWarn("restarting tunnel in %v", delay)
+		time.Sleep(delay)
+		delay *= 2
+		if delay > maxRetryDelay {
+			delay = maxRetryDelay
+		}
 	}
-	serviceRunning = false
 }
 
 func (s *systrayState) pollStatus() {
