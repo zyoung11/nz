@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"nz/internal/config"
@@ -41,6 +42,7 @@ type Daemon struct {
 	ln        net.Listener
 	startedAt time.Time
 	stopCh    chan struct{}
+	stopOnce  sync.Once
 }
 
 // New loads config and state for the daemon at cfgPath.
@@ -150,8 +152,13 @@ func (d *Daemon) handle(req ipc.Request) ipc.Response {
 	}
 }
 
+// Stop terminates the daemon loop.
+func (d *Daemon) Stop() {
+	d.stopOnce.Do(func() { close(d.stopCh) })
+}
+
 func (d *Daemon) handleStop() ipc.Response {
-	close(d.stopCh)
+	d.Stop()
 	return ipc.Response{OK: true}
 }
 
