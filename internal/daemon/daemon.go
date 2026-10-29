@@ -1,0 +1,234 @@
+package daemon
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"time"
+
+	"nz/internal/config"
+	"nz/internal/ipc"
+	"nz/internal/logx"
+	"nz/internal/state"
+)
+
+type statusData struct {
+	Version  string `json:"version"`
+	Mode     string `json:"mode"`
+	Port     int    `json:"port"`
+	Subnet   string `json:"subnet"`
+	Uptime   int64  `json:"uptime_sec"`
+	Users    int    `json:"users"`
+	Machines int    `json:"machines"`
+	Pending  int    `json:"pending"`
+}
+
+type Daemon struct {
+	Version   string
+	cfgPath   string
+	cfg       *config.Config
+	st        *state.State
+	ln        net.Listener
+	startedAt time.Time
+	stopCh    chan struct{}
+}
+
+// New loads config and state for the daemon at cfgPath.
+func New(cfgPath, version string) (*Daemon, error) {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	statePath := filepath.Join(filepath.Dir(cfgPath), config.StateFileName)
+	st, err := state.Load(statePath)
+	if err != nil {
+		return nil, err
+	}
+	return &Daemon{
+		Version:   version,
+		cfgPath:   cfgPath,
+		cfg:       cfg,
+		st:        st,
+		startedAt: time.Now(),
+		stopCh:    make(chan struct{}),
+	}, nil
+}
+
+// Serve opens the admin socket and answers requests until stopped.
+// On success it notifies pingback when the address is not empty.
+func (d *Daemon) Serve(pingback, token string) error {
+	ln, err := ipc.Listen(ipc.SocketPath())
+	if err != nil {
+		return err
+	}
+	d.ln = ln
+	defer os.Remove(ipc.SocketPath())
+	logx.Success("daemon started, mode %s, port %d", d.cfg.Mode, d.cfg.Port)
+	if pingback != "" {
+		notifyPingback(pingback, token)
+	}
+	go ipc.Serve(ln, d.handle)
+	<-d.stopCh
+	ln.Close()
+	logx.Info("daemon stopped")
+	return nil
+}
+
+func notifyPingback(addr, token string) {
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "%s\n", token)
+}
+
+func (d *Daemon) handle(req ipc.Request) ipc.Response {
+	switch req.Command {
+	case "stop":
+		return d.handleStop()
+	case "reload":
+		return d.handleReload()
+	case "status":
+		return d.handleStatus()
+	case "list":
+		return d.handleList()
+	case "users":
+		return d.handleUsers()
+	case "allow", "deny", "block", "unblock", "trust", "untrust":
+		return d.handleAdmin(req)
+	default:
+		return ipc.Response{OK: false, Error: fmt.Sprintf("unknown command %s", req.Command)}
+	}
+}
+
+func (d *Daemon) handleStop() ipc.Response {
+	close(d.stopCh)
+	return ipc.Response{OK: true}
+}
+
+func (d *Daemon) handleReload() ipc.Response {
+	cfg, err := config.Load(d.cfgPath)
+	if err != nil {
+		return ipc.Response{OK: false, Error: err.Error()}
+	}
+	if err := cfg.Validate(); err != nil {
+		return ipc.Response{OK: false, Error: fmt.Sprintf("config rejected, keep running with old config: %v", err)}
+	}
+	d.cfg = cfg
+	logx.Success("config reloaded")
+	return ipc.Response{OK: true}
+}
+
+func (d *Daemon) handleStatus() ipc.Response {
+	users, machines := d.st.Snapshot()
+	pending := 0
+	for _, u := range users {
+		if u.Status == state.UserPending {
+			pending++
+		}
+	}
+	for _, m := range machines {
+		if m.Status == state.MachinePending {
+			pending++
+		}
+	}
+	data := statusData{
+		Version:  d.Version,
+		Mode:     d.cfg.Mode,
+		Port:     d.cfg.Port,
+		Subnet:   d.cfg.Subnet,
+		Uptime:   int64(time.Since(d.startedAt).Seconds()),
+		Users:    len(users),
+		Machines: len(machines),
+		Pending:  pending,
+	}
+	return jsonData(data)
+}
+
+func (d *Daemon) handleList() ipc.Response {
+	_, machines := d.st.Snapshot()
+	if d.cfg.Mode == "node" {
+		filtered := machines[:0:0]
+		for _, m := range machines {
+			if m.User == d.cfg.User || m.Trusted {
+				filtered = append(filtered, m)
+			}
+		}
+		machines = filtered
+	}
+	return jsonData(machines)
+}
+
+func (d *Daemon) handleUsers() ipc.Response {
+	if d.cfg.Mode != "server" {
+		return ipc.Response{OK: false, Error: "users is only available on the server"}
+	}
+	users, machines := d.st.Snapshot()
+	return jsonData(struct {
+		Users    []state.User    `json:"users"`
+		Machines []state.Machine `json:"machines"`
+	}{users, machines})
+}
+
+func (d *Daemon) handleAdmin(req ipc.Request) ipc.Response {
+	if d.cfg.Mode != "server" {
+		return ipc.Response{OK: false, Error: fmt.Sprintf("%s is only available on the server", req.Command)}
+	}
+	user, machine, err := state.ParseTarget(req.Target)
+	if err != nil {
+		return ipc.Response{OK: false, Error: err.Error()}
+	}
+	switch req.Command {
+	case "allow":
+		err = d.st.Allow(user, machine)
+	case "deny":
+		err = d.st.Deny(user, machine)
+	case "block":
+		err = d.st.Block(user, machine)
+	case "unblock":
+		err = d.st.Unblock(user, machine)
+	case "trust":
+		err = d.st.Trust(user, machine)
+	case "untrust":
+		err = d.st.Untrust(user, machine)
+	}
+	if err != nil {
+		return ipc.Response{OK: false, Error: err.Error()}
+	}
+	logx.Success("%s %s applied", req.Command, req.Target)
+	return ipc.Response{OK: true}
+}
+
+func jsonData(v any) ipc.Response {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return ipc.Response{OK: false, Error: err.Error()}
+	}
+	return ipc.Response{OK: true, Data: string(data)}
+}
+
+// CheckSocket reports whether a daemon answers on the admin socket.
+func CheckSocket() bool {
+	conn, err := ipc.Dial(ipc.SocketPath())
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+// ReadPingbackToken reads one token line from conn.
+func ReadPingbackToken(conn net.Conn) string {
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		return ""
+	}
+	return line[:len(line)-1]
+}
