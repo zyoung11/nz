@@ -34,7 +34,11 @@ func newTestEnv(t *testing.T) *testEnv {
 		Subnet: "192.168.200.0/24",
 		Admin:  config.Account{Name: "me", Password: "pw"},
 	}
-	srv := New(cfg, st)
+	id, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("generate identity: %v", err)
+	}
+	srv := New(cfg, st, id)
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
 		t.Fatalf("listen: %v", err)

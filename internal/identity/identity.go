@@ -1,8 +1,10 @@
 package identity
 
 import (
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +12,7 @@ import (
 	"os"
 
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/hkdf"
 )
 
 const (
@@ -20,30 +23,52 @@ const (
 	saltLen      = 16
 )
 
+const (
+	PublicBlobSize  = ed25519.PublicKeySize + 32
+	SignatureSize   = ed25519.SignatureSize
+	ExchangeKeySize = 32
+)
+
 type Identity struct {
-	Public  ed25519.PublicKey
-	Private ed25519.PrivateKey
+	SignPublic  ed25519.PublicKey
+	SignPrivate ed25519.PrivateKey
+	ExchPublic  []byte
+	ExchPrivate *ecdh.PrivateKey
 }
 
 type keyFile struct {
-	Public  string `json:"public"`
-	Private string `json:"private"`
+	SignPublic  string `json:"sign_public"`
+	SignPrivate string `json:"sign_private"`
+	ExchPublic  string `json:"exch_public"`
+	ExchPrivate string `json:"exch_private"`
 }
 
-// Generate creates a fresh Ed25519 machine identity.
+// Generate creates a fresh machine identity with a signing key
+// and a key exchange key.
 func Generate() (*Identity, error) {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	signPub, signPriv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate key pair: %w", err)
+		return nil, fmt.Errorf("failed to generate signing key: %w", err)
 	}
-	return &Identity{Public: pub, Private: priv}, nil
+	exchPriv, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate exchange key: %w", err)
+	}
+	return &Identity{
+		SignPublic:  signPub,
+		SignPrivate: signPriv,
+		ExchPublic:  exchPriv.PublicKey().Bytes(),
+		ExchPrivate: exchPriv,
+	}, nil
 }
 
 // Save writes the identity to path with owner-only permissions.
 func (i *Identity) Save(path string) error {
 	kf := keyFile{
-		Public:  base64.StdEncoding.EncodeToString(i.Public),
-		Private: base64.StdEncoding.EncodeToString(i.Private),
+		SignPublic:  base64.StdEncoding.EncodeToString(i.SignPublic),
+		SignPrivate: base64.StdEncoding.EncodeToString(i.SignPrivate),
+		ExchPublic:  base64.StdEncoding.EncodeToString(i.ExchPublic),
+		ExchPrivate: base64.StdEncoding.EncodeToString(i.ExchPrivate.Bytes()),
 	}
 	data, err := json.MarshalIndent(kf, "", "  ")
 	if err != nil {
@@ -65,18 +90,32 @@ func Load(path string) (*Identity, error) {
 	if err := json.Unmarshal(data, &kf); err != nil {
 		return nil, fmt.Errorf("failed to parse key file %s: %w", path, err)
 	}
-	pub, err := base64.StdEncoding.DecodeString(kf.Public)
+	signPub, err := base64.StdEncoding.DecodeString(kf.SignPublic)
+	if err != nil || len(signPub) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("key file %s has a bad signing public key", path)
+	}
+	signPriv, err := base64.StdEncoding.DecodeString(kf.SignPrivate)
+	if err != nil || len(signPriv) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("key file %s has a bad signing private key", path)
+	}
+	exchPub, err := base64.StdEncoding.DecodeString(kf.ExchPublic)
+	if err != nil || len(exchPub) != ExchangeKeySize {
+		return nil, fmt.Errorf("key file %s has a bad exchange public key", path)
+	}
+	exchPrivBytes, err := base64.StdEncoding.DecodeString(kf.ExchPrivate)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode public key: %w", err)
+		return nil, fmt.Errorf("key file %s has a bad exchange private key", path)
 	}
-	priv, err := base64.StdEncoding.DecodeString(kf.Private)
+	exchPriv, err := ecdh.X25519().NewPrivateKey(exchPrivBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode private key: %w", err)
+		return nil, fmt.Errorf("key file %s has a bad exchange private key: %w", path, err)
 	}
-	if len(pub) != ed25519.PublicKeySize || len(priv) != ed25519.PrivateKeySize {
-		return nil, fmt.Errorf("key file %s has wrong key sizes", path)
-	}
-	return &Identity{Public: ed25519.PublicKey(pub), Private: ed25519.PrivateKey(priv)}, nil
+	return &Identity{
+		SignPublic:  ed25519.PublicKey(signPub),
+		SignPrivate: ed25519.PrivateKey(signPriv),
+		ExchPublic:  exchPub,
+		ExchPrivate: exchPriv,
+	}, nil
 }
 
 // LoadOrCreate returns the identity at path, generating one on first use.
@@ -94,9 +133,57 @@ func LoadOrCreate(path string) (*Identity, error) {
 	return id, nil
 }
 
-// Fingerprint returns the short public key fingerprint of pub.
-func Fingerprint(pub []byte) string {
-	return hex.EncodeToString(pub[:4])
+// Sign signs msg with the machine signing key.
+func (i *Identity) Sign(msg []byte) []byte {
+	return ed25519.Sign(i.SignPrivate, msg)
+}
+
+// Verify checks sig over msg against a signing public key.
+func Verify(signPub, msg, sig []byte) bool {
+	if len(signPub) != ed25519.PublicKeySize || len(sig) != ed25519.SignatureSize {
+		return false
+	}
+	return ed25519.Verify(ed25519.PublicKey(signPub), msg, sig)
+}
+
+// SharedKey derives the session key for a peer with ECDH and HKDF.
+func (i *Identity) SharedKey(peerExchPub []byte) ([]byte, error) {
+	peer, err := ecdh.X25519().NewPublicKey(peerExchPub)
+	if err != nil {
+		return nil, fmt.Errorf("bad peer exchange key: %w", err)
+	}
+	secret, err := i.ExchPrivate.ECDH(peer)
+	if err != nil {
+		return nil, fmt.Errorf("key exchange failed: %w", err)
+	}
+	reader := hkdf.New(sha256.New, secret, nil, []byte("n0-session-v1"))
+	key := make([]byte, 32)
+	if _, err := reader.Read(key); err != nil {
+		return nil, fmt.Errorf("session key derivation failed: %w", err)
+	}
+	return key, nil
+}
+
+// PublicBlob packs the signing and exchange public keys.
+func (i *Identity) PublicBlob() []byte {
+	blob := make([]byte, 0, PublicBlobSize)
+	blob = append(blob, i.SignPublic...)
+	blob = append(blob, i.ExchPublic...)
+	return blob
+}
+
+// SplitPublic unpacks a public blob into signing and exchange keys.
+func SplitPublic(blob []byte) ([]byte, []byte, error) {
+	if len(blob) != PublicBlobSize {
+		return nil, nil, fmt.Errorf("public blob is %d bytes, want %d", len(blob), PublicBlobSize)
+	}
+	return blob[:ed25519.PublicKeySize], blob[ed25519.PublicKeySize:], nil
+}
+
+// Fingerprint returns the short public key fingerprint of blob.
+func Fingerprint(blob []byte) string {
+	sum := sha256.Sum256(blob)
+	return hex.EncodeToString(sum[:4])
 }
 
 // NewSalt returns a random salt for verifier derivation.

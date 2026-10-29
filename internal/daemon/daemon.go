@@ -5,15 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"time"
 
 	"nz/internal/config"
+	"nz/internal/identity"
 	"nz/internal/ipc"
 	"nz/internal/logx"
+	"nz/internal/node"
 	"nz/internal/server"
 	"nz/internal/state"
+	"nz/internal/tun"
 )
 
 type statusData struct {
@@ -30,6 +34,7 @@ type statusData struct {
 type Daemon struct {
 	Version   string
 	cfgPath   string
+	keyPath   string
 	cfg       *config.Config
 	st        *state.State
 	srv       *server.Server
@@ -52,9 +57,15 @@ func New(cfgPath, version string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
+	keyPath := filepath.Join(filepath.Dir(cfgPath), config.KeyFileName)
+	id, err := identity.LoadOrCreate(keyPath)
+	if err != nil {
+		return nil, err
+	}
 	d := &Daemon{
 		Version:   version,
 		cfgPath:   cfgPath,
+		keyPath:   keyPath,
 		cfg:       cfg,
 		st:        st,
 		startedAt: time.Now(),
@@ -64,7 +75,15 @@ func New(cfgPath, version string) (*Daemon, error) {
 		if err := st.EnsureAdmin(cfg.Admin.Name); err != nil {
 			return nil, err
 		}
-		d.srv = server.New(cfg, st)
+		d.srv = server.New(cfg, st, id)
+		if subnet, err := netip.ParsePrefix(cfg.Subnet); err == nil {
+			dev, err := tun.Create(config.TunName, subnet.Addr().Next(), subnet)
+			if err != nil {
+				logx.Warn("local tun not available: %v", err)
+			} else {
+				d.srv.SetTUN(dev)
+			}
+		}
 	}
 	return d, nil
 }
@@ -83,6 +102,13 @@ func (d *Daemon) Serve(pingback, token string) error {
 		go func() {
 			if err := d.srv.Run(); err != nil {
 				logx.Error("server loop stopped: %v", err)
+			}
+		}()
+	}
+	if d.cfg.Mode == "node" {
+		go func() {
+			if err := node.Run(d.cfg, d.keyPath); err != nil {
+				logx.Error("node stopped: %v", err)
 			}
 		}()
 	}

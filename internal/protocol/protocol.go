@@ -81,9 +81,10 @@ type JoinProof struct {
 }
 
 type JoinReply struct {
-	Result string `json:"result"`
-	Error  string `json:"error,omitempty"`
-	VPNIP  string `json:"vpn_ip,omitempty"`
+	Result   string `json:"result"`
+	Error    string `json:"error,omitempty"`
+	VPNIP    string `json:"vpn_ip,omitempty"`
+	ServerPub []byte `json:"server_pub,omitempty"`
 }
 
 type ApproveNotify struct {

@@ -16,6 +16,7 @@ const (
 	StateFileName  = "n0-state.json"
 	LogFileName    = "n0.log"
 	SocketFileName = "n0.sock"
+	TunName       = "n0"
 )
 
 type Account struct {

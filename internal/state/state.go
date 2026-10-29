@@ -326,6 +326,40 @@ func (s *State) FindMachineByPublic(public string) (Machine, bool) {
 	return Machine{}, false
 }
 
+// FindMachineByIP returns the machine bound to the VPN address.
+func (s *State) FindMachineByIP(ip string) (Machine, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.Machines {
+		if s.Machines[i].VPNIP == ip {
+			return s.Machines[i], true
+		}
+	}
+	return Machine{}, false
+}
+
+// ActiveMachines returns a copy of all active machines.
+func (s *State) ActiveMachines() []Machine {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Machine, 0, len(s.Machines))
+	for _, m := range s.Machines {
+		if m.Status == MachineActive {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// Touch records machine activity for the last seen column.
+func (s *State) Touch(user, machine string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if m := s.findMachineLocked(user, machine); m != nil {
+		m.LastSeen = time.Now()
+	}
+}
+
 // RegisterJoin records a join attempt and returns the resulting status.
 // It returns "pending" for new users and new machines, the current status
 // for known machines and "rejected" for blocked or duplicated entries.

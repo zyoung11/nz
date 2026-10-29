@@ -13,26 +13,37 @@ import (
 	"nz/internal/logx"
 	"nz/internal/protocol"
 	"nz/internal/state"
+	"nz/internal/tun"
 )
 
 type Server struct {
 	cfg  *config.Config
 	st   *state.State
+	id   *identity.Identity
+	tun  tun.Device
 	conn *net.UDPConn
 
-	mu        sync.Mutex
-	nonces    map[string][]byte
-	endpoints map[string]netip.AddrPort
+	mu          sync.Mutex
+	nonces      map[string][]byte
+	endpoints   map[string]netip.AddrPort
+	ipEndpoints map[netip.Addr]netip.AddrPort
 }
 
-// New creates a server for the given config and state.
-func New(cfg *config.Config, st *state.State) *Server {
+// New creates a server for the given config, state and identity.
+func New(cfg *config.Config, st *state.State, id *identity.Identity) *Server {
 	return &Server{
-		cfg:       cfg,
-		st:        st,
-		nonces:    make(map[string][]byte),
-		endpoints: make(map[string]netip.AddrPort),
+		cfg:         cfg,
+		st:          st,
+		id:          id,
+		nonces:      make(map[string][]byte),
+		endpoints:   make(map[string]netip.AddrPort),
+		ipEndpoints: make(map[netip.Addr]netip.AddrPort),
 	}
+}
+
+// SetTUN attaches the local TUN device for traffic to the server itself.
+func (s *Server) SetTUN(dev tun.Device) {
+	s.tun = dev
 }
 
 // SetConfig swaps in a reloaded config.
@@ -75,6 +86,9 @@ func (s *Server) handle(env protocol.Envelope, remote netip.AddrPort) {
 		s.handleJoinRequest(env.Body, remote)
 	case protocol.TypeJoinProof:
 		s.handleJoinProof(env.Body, remote)
+	case protocol.TypeData, protocol.TypeRelayData, protocol.TypePeerQuery,
+		protocol.TypeMachineList, protocol.TypeKeepAlive:
+		s.handleSigned(env, remote)
 	}
 }
 
@@ -189,7 +203,15 @@ func (s *Server) rememberEndpoint(user, machine string, addr netip.AddrPort) {
 }
 
 func (s *Server) sendJoinReply(addr netip.AddrPort, reply protocol.JoinReply) {
+	reply.ServerPub = s.id.PublicBlob()
 	s.sendEnvelope(addr, protocol.TypeJoinReply, protocol.EncodeJSON(reply))
+}
+
+func (s *Server) sendRaw(env protocol.Envelope, addr netip.AddrPort) {
+	if s.conn == nil {
+		return
+	}
+	s.conn.WriteToUDPAddrPort(protocol.Marshal(env), addr)
 }
 
 func (s *Server) sendEnvelope(addr netip.AddrPort, typ protocol.MsgType, body []byte) {
