@@ -1,8 +1,10 @@
 package state
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"os"
 	"strings"
 	"sync"
@@ -288,4 +290,164 @@ func removeMachine(machines []Machine, user, name string) []Machine {
 		}
 	}
 	return out
+}
+
+// GetUser returns a copy of the named user.
+func (s *State) GetUser(name string) (User, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.findUserLocked(name)
+	if u == nil {
+		return User{}, false
+	}
+	return *u, true
+}
+
+// GetMachine returns a copy of the named machine.
+func (s *State) GetMachine(user, machine string) (Machine, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.findMachineLocked(user, machine)
+	if m == nil {
+		return Machine{}, false
+	}
+	return *m, true
+}
+
+// FindMachineByPublic returns the machine holding the public key.
+func (s *State) FindMachineByPublic(public string) (Machine, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.Machines {
+		if s.Machines[i].Public == public {
+			return s.Machines[i], true
+		}
+	}
+	return Machine{}, false
+}
+
+// RegisterJoin records a join attempt and returns the resulting status.
+// It returns "pending" for new users and new machines, the current status
+// for known machines and "rejected" for blocked or duplicated entries.
+func (s *State) RegisterJoin(user, machine, public, fingerprint string, salt, verifier []byte) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.findUserLocked(user)
+	if u == nil {
+		if len(salt) == 0 || len(verifier) == 0 {
+			return "", fmt.Errorf("new user %s must send salt and verifier", user)
+		}
+		s.Users = append(s.Users, User{
+			Name: user, Salt: base64.StdEncoding.EncodeToString(salt),
+			Verifier: base64.StdEncoding.EncodeToString(verifier),
+			Status:   UserPending, JoinedAt: time.Now(),
+		})
+		s.Machines = append(s.Machines, Machine{
+			User: user, Name: machine, Public: public, Fingerprint: fingerprint,
+			Status: MachinePending, JoinedAt: time.Now(),
+		})
+		return string(MachinePending), s.saveLocked()
+	}
+	if u.Status == UserBlocked {
+		return string(MachineBlocked), nil
+	}
+	for i := range s.Machines {
+		m := &s.Machines[i]
+		if m.Public != public {
+			continue
+		}
+		if m.Status == MachineBlocked {
+			return string(MachineBlocked), nil
+		}
+		if m.Name != machine {
+			if s.machineNameUsedLocked(user, machine, public) {
+				return "", fmt.Errorf("machine name %s/%s already used by another key", user, machine)
+			}
+			m.Name = machine
+		}
+		m.LastSeen = time.Now()
+		return string(m.Status), s.saveLocked()
+	}
+	if s.machineNameUsedLocked(user, machine, public) {
+		return "", fmt.Errorf("machine name %s/%s already used by another key", user, machine)
+	}
+	s.Machines = append(s.Machines, Machine{
+		User: user, Name: machine, Public: public, Fingerprint: fingerprint,
+		Status: MachinePending, JoinedAt: time.Now(),
+	})
+	return string(MachinePending), s.saveLocked()
+}
+
+func (s *State) machineNameUsedLocked(user, machine, public string) bool {
+	for _, m := range s.Machines {
+		if m.User == user && m.Name == machine && m.Public != public {
+			return true
+		}
+	}
+	return false
+}
+
+// SetVerifier stores the password verifier for an existing user.
+func (s *State) SetVerifier(name string, salt, verifier []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.findUserLocked(name)
+	if u == nil {
+		return fmt.Errorf("user %s not found", name)
+	}
+	u.Salt = base64.StdEncoding.EncodeToString(salt)
+	u.Verifier = base64.StdEncoding.EncodeToString(verifier)
+	return s.saveLocked()
+}
+
+// SetMachineIP binds the allocated IP to the machine.
+func (s *State) SetMachineIP(user, machine, ip string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.findMachineLocked(user, machine)
+	if m == nil {
+		return fmt.Errorf("machine %s/%s not found", user, machine)
+	}
+	m.VPNIP = ip
+	return s.saveLocked()
+}
+
+// AllocateIP returns the lowest free host address in subnet from .2 up.
+func (s *State) AllocateIP(subnet string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prefix, err := netip.ParsePrefix(subnet)
+	if err != nil {
+		return "", fmt.Errorf("bad subnet %q: %w", subnet, err)
+	}
+	used := make(map[string]bool, len(s.Machines))
+	for _, m := range s.Machines {
+		if m.VPNIP != "" {
+			used[m.VPNIP] = true
+		}
+	}
+	serverIP := prefix.Addr().Next()
+	for addr := serverIP.Next(); prefix.Contains(addr); addr = addr.Next() {
+		if addr == serverIP || used[addr.String()] {
+			continue
+		}
+		return addr.String(), nil
+	}
+	return "", fmt.Errorf("subnet %s has no free address", subnet)
+}
+
+// EnsureAdmin keeps the admin user present and active.
+func (s *State) EnsureAdmin(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.findUserLocked(name)
+	if u == nil {
+		s.Users = append(s.Users, User{Name: name, Status: UserActive, JoinedAt: time.Now()})
+		return s.saveLocked()
+	}
+	if u.Status != UserActive {
+		u.Status = UserActive
+		return s.saveLocked()
+	}
+	return nil
 }

@@ -12,6 +12,7 @@ import (
 	"nz/internal/config"
 	"nz/internal/ipc"
 	"nz/internal/logx"
+	"nz/internal/server"
 	"nz/internal/state"
 )
 
@@ -31,6 +32,7 @@ type Daemon struct {
 	cfgPath   string
 	cfg       *config.Config
 	st        *state.State
+	srv       *server.Server
 	ln        net.Listener
 	startedAt time.Time
 	stopCh    chan struct{}
@@ -50,14 +52,21 @@ func New(cfgPath, version string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Daemon{
+	d := &Daemon{
 		Version:   version,
 		cfgPath:   cfgPath,
 		cfg:       cfg,
 		st:        st,
 		startedAt: time.Now(),
 		stopCh:    make(chan struct{}),
-	}, nil
+	}
+	if cfg.Mode == "server" {
+		if err := st.EnsureAdmin(cfg.Admin.Name); err != nil {
+			return nil, err
+		}
+		d.srv = server.New(cfg, st)
+	}
+	return d, nil
 }
 
 // Serve opens the admin socket and answers requests until stopped.
@@ -70,6 +79,13 @@ func (d *Daemon) Serve(pingback, token string) error {
 	d.ln = ln
 	defer os.Remove(ipc.SocketPath())
 	logx.Success("daemon started, mode %s, port %d", d.cfg.Mode, d.cfg.Port)
+	if d.srv != nil {
+		go func() {
+			if err := d.srv.Run(); err != nil {
+				logx.Error("server loop stopped: %v", err)
+			}
+		}()
+	}
 	if pingback != "" {
 		notifyPingback(pingback, token)
 	}
@@ -122,6 +138,9 @@ func (d *Daemon) handleReload() ipc.Response {
 		return ipc.Response{OK: false, Error: fmt.Sprintf("config rejected, keep running with old config: %v", err)}
 	}
 	d.cfg = cfg
+	if d.srv != nil {
+		d.srv.SetConfig(cfg)
+	}
 	logx.Success("config reloaded")
 	return ipc.Response{OK: true}
 }
@@ -188,6 +207,9 @@ func (d *Daemon) handleAdmin(req ipc.Request) ipc.Response {
 	switch req.Command {
 	case "allow":
 		err = d.st.Allow(user, machine)
+		if err == nil && machine != "" {
+			err = d.approveMachine(user, machine)
+		}
 	case "deny":
 		err = d.st.Deny(user, machine)
 	case "block":
@@ -204,6 +226,27 @@ func (d *Daemon) handleAdmin(req ipc.Request) ipc.Response {
 	}
 	logx.Success("%s %s applied", req.Command, req.Target)
 	return ipc.Response{OK: true}
+}
+
+func (d *Daemon) approveMachine(user, machine string) error {
+	m, ok := d.st.GetMachine(user, machine)
+	if !ok {
+		return nil
+	}
+	if m.VPNIP == "" {
+		ip, err := d.st.AllocateIP(d.cfg.Subnet)
+		if err != nil {
+			return err
+		}
+		if err := d.st.SetMachineIP(user, machine, ip); err != nil {
+			return err
+		}
+		logx.Info("allocated %s for %s/%s", ip, user, machine)
+	}
+	if d.srv != nil {
+		d.srv.NotifyApprove(user, machine)
+	}
+	return nil
 }
 
 func jsonData(v any) ipc.Response {
