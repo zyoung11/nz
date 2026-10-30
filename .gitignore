@@ -13,3 +13,4 @@ n0.key
 n0-state.json
 test/*.log
 n0.auth.json
+state.json

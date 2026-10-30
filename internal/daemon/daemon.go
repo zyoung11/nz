@@ -234,8 +234,9 @@ func (d *Daemon) handleList() ipc.Response {
 		User:    d.cfg.Admin.Name,
 		Machine: "server",
 		VPNIP:   serverIP(d),
-		Status:  "local",
+		Status:  "online",
 		Trusted: true,
+		Self:    d.cfg.Mode == "server",
 	})
 	for _, m := range machines {
 		status := "unknown"

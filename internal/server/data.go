@@ -19,6 +19,9 @@ func (s *Server) handleSigned(env protocol.Envelope, remote netip.AddrPort) {
 	if !ok {
 		return
 	}
+	if isDataPlane(env.Type) && src.Status != state.MachineActive {
+		return
+	}
 	s.rememberIPEndpoint(signed.SrcIP, remote)
 	switch env.Type {
 	case protocol.TypeRelayData:
@@ -54,10 +57,11 @@ func (s *Server) verifyMachine(m protocol.SignedMessage, sig []byte) (state.Mach
 		logx.Warn("bad signature from %s/%s dropped", machine.User, machine.Name)
 		return state.Machine{}, false
 	}
-	if machine.Status != state.MachineActive {
-		return state.Machine{}, false
-	}
 	return machine, true
+}
+
+func isDataPlane(typ protocol.MsgType) bool {
+	return typ == protocol.TypeRelayData || typ == protocol.TypeData
 }
 
 const flowTTL = 60 * time.Second
@@ -161,7 +165,7 @@ func (s *Server) handleMachineList(m protocol.SignedMessage, src state.Machine) 
 		User:    s.cfg.Admin.Name,
 		Machine: "server",
 		VPNIP:   s.serverIP().String(),
-		Status:  "local",
+		Status:  "online",
 		Trusted: true,
 	})
 	for _, other := range s.st.ActiveMachines() {
@@ -184,6 +188,7 @@ func (s *Server) handleMachineList(m protocol.SignedMessage, src state.Machine) 
 			ExchPub:     exchPub,
 			Trusted:     other.Trusted || other.User == s.cfg.Admin.Name,
 			Status:      status,
+			Self:        other.VPNIP == m.SrcIP.String(),
 			CanCall:     s.AllowRelay(src, other),
 			CanCallBack: s.AllowRelay(other, src),
 		})

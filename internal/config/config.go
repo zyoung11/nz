@@ -13,9 +13,8 @@ const (
 	DefaultSubnet  = "192.168.200.0/24"
 	ConfigFileName = "config.json"
 	KeyFileName    = "n0.key"
-	StateFileName  = "n0-state.json"
+	StateFileName  = "state.json"
 	LogFileName    = "n0.log"
-	SocketFileName = "n0.sock"
 	TunName        = "n0"
 )
 

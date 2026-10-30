@@ -4,6 +4,7 @@ source "$(dirname "$0")/lib.sh"
 info "remote management from an admin node"
 
 podman exec n0-server n0 allow friend >/dev/null 2>&1
+podman exec n0-server n0 allow friend/laptop >/dev/null 2>&1
 podman exec n0-server n0 deny friend/pc >/dev/null 2>&1
 for _ in $(seq 1 20); do
 	[[ "$(podman exec n0-server n0 users --pending 2>&1)" == *"pc"* ]] && break
