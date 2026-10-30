@@ -71,6 +71,8 @@ type Node struct {
 
 	mu             sync.Mutex
 	peers          map[netip.Addr]*peer
+	pendingMu      sync.Mutex
+	pending        map[netip.Addr][]pendingPkt
 	queryReplyCh   chan protocol.Envelope
 	joinReplyCh    chan protocol.Envelope
 	approveCh      chan protocol.Envelope
@@ -90,6 +92,7 @@ func Run(cfg *config.Config, st *state.State, id *identity.Identity) error {
 		id:           id,
 		st:           st,
 		peers:        make(map[netip.Addr]*peer),
+		pending:      make(map[netip.Addr][]pendingPkt),
 		queryReplyCh: make(chan protocol.Envelope, 1),
 		joinReplyCh:  make(chan protocol.Envelope, 1),
 		approveCh:    make(chan protocol.Envelope, 1),

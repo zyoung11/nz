@@ -29,7 +29,7 @@ func (s *Server) handleSigned(env protocol.Envelope, remote netip.AddrPort) {
 	case protocol.TypeData:
 		s.localData(signed, src)
 	case protocol.TypePeerQuery:
-		s.handlePeerQuery(signed, src)
+		s.handlePeerQuery(signed, src, remote)
 	case protocol.TypeMachineList:
 		s.handleMachineList(signed, src)
 	case protocol.TypeAdminRequest:
@@ -130,13 +130,14 @@ func (s *Server) localData(m protocol.SignedMessage, src state.Machine) {
 	s.tun.Write(plain)
 }
 
-func (s *Server) handlePeerQuery(m protocol.SignedMessage, src state.Machine) {
+func (s *Server) handlePeerQuery(m protocol.SignedMessage, src state.Machine, remote netip.AddrPort) {
 	target, err := protocol.ParsePeerQuery(m.Payload)
 	if err != nil {
 		return
 	}
 	answer := protocol.PeerAnswer{Found: false}
-	if dst, ok := s.st.FindMachineByIP(target.String()); ok && dst.Status == state.MachineActive {
+	dst, found := s.st.FindMachineByIP(target.String())
+	if found && dst.Status == state.MachineActive {
 		answer = protocol.PeerAnswer{
 			Found:       true,
 			CanCall:     s.AllowRelay(src, dst),
@@ -157,6 +158,22 @@ func (s *Server) handlePeerQuery(m protocol.SignedMessage, src state.Machine) {
 		Payload: protocol.MarshalPeerAnswer(answer),
 	}
 	s.sendSigned(signed, s.ipEndpoint(m.SrcIP))
+	if answer.HasAddr {
+		s.sendPeerIntro(src, dst, remote)
+	}
+}
+
+// sendPeerIntro tells the target machine which endpoint is calling so
+// both sides punch their NAT mappings at the same time.
+func (s *Server) sendPeerIntro(src, dst state.Machine, remote netip.AddrPort) {
+	intro := protocol.PeerIntro{VPNIP: src.VPNIP, Addr: remote}
+	signed := protocol.SignedMessage{
+		Type:    protocol.TypePeerIntro,
+		SrcIP:   s.serverIP(),
+		DstIP:   netip.MustParseAddr(dst.VPNIP),
+		Payload: protocol.EncodeJSON(intro),
+	}
+	s.sendSigned(signed, s.ipEndpoint(netip.MustParseAddr(dst.VPNIP)))
 }
 
 func (s *Server) handleMachineList(m protocol.SignedMessage, src state.Machine) {

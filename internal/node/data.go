@@ -2,6 +2,7 @@ package node
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
 	"time"
 
@@ -52,6 +53,8 @@ func (n *Node) readFromUDP() {
 			deliver(n.approveCh, env)
 		case protocol.TypePolicyChanged:
 			n.dropAllPeers()
+		case protocol.TypePeerIntro:
+			n.handlePeerIntro(env)
 		case protocol.TypeKeepAlive:
 			signed, sig, err := protocol.ParseSigned(env.Body)
 			if err == nil && !n.verifyServer(signed, sig) {
@@ -302,11 +305,14 @@ func (n *Node) handleData(env protocol.Envelope, from netip.AddrPort) {
 	}
 	p := n.lookupPeer(signed.SrcIP)
 	if p == nil {
-		go n.ensurePeer(signed.SrcIP)
-		logx.Warn("data from unknown peer %v dropped, discovering", signed.SrcIP)
+		n.cachePacket(signed.SrcIP, env, from)
+		go n.ensurePeerThenFlush(signed.SrcIP)
 		return
 	}
-	if p.realAddr.IsValid() && from == normalize(p.realAddr) {
+	if from != normalize(n.serverAddr) {
+		if p.realAddr != from {
+			p.realAddr = from
+		}
 		p.directOK = true
 		p.lastSeen = time.Now()
 	}
@@ -338,6 +344,63 @@ func (n *Node) lookupPeer(ip netip.Addr) *peer {
 	return n.peers[ip]
 }
 
+// handlePeerIntro punches toward the caller endpoint so both NAT
+// mappings open at the same time.
+func (n *Node) handlePeerIntro(env protocol.Envelope) {
+	signed, sig, err := protocol.ParseSigned(env.Body)
+	if err != nil {
+		return
+	}
+	if !n.verifyServer(signed, sig) {
+		return
+	}
+	var intro protocol.PeerIntro
+	if err := protocol.DecodeJSON(signed.Payload, &intro); err != nil {
+		return
+	}
+	go punchAddr(n.conn, intro.Addr)
+}
+
+var punchPacket = []byte{0x50}
+
+func punchAddr(conn *net.UDPConn, addr netip.AddrPort) {
+	if !addr.IsValid() {
+		return
+	}
+	for range 5 {
+		conn.WriteToUDPAddrPort(punchPacket, addr)
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+type pendingPkt struct {
+	env  protocol.Envelope
+	from netip.AddrPort
+}
+
+func (n *Node) cachePacket(ip netip.Addr, env protocol.Envelope, from netip.AddrPort) {
+	n.pendingMu.Lock()
+	defer n.pendingMu.Unlock()
+	q := n.pending[ip]
+	if len(q) >= 4 {
+		return
+	}
+	n.pending[ip] = append(q, pendingPkt{env: env, from: from})
+}
+
+func (n *Node) ensurePeerThenFlush(ip netip.Addr) {
+	if n.ensurePeer(ip) == nil {
+		return
+	}
+	n.pendingMu.Lock()
+	q := n.pending[ip]
+	delete(n.pending, ip)
+	n.pendingMu.Unlock()
+	for _, pkt := range q {
+		n.handleData(pkt.env, pkt.from)
+	}
+}
+
 func (n *Node) dropAllPeers() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -367,6 +430,22 @@ func (n *Node) keepAliveLoop() {
 		n.conn.WriteToUDPAddrPort(
 			protocol.Marshal(protocol.Envelope{Type: protocol.TypeKeepAlive, Body: body}),
 			n.serverAddr)
+		n.punchAllPeers()
+	}
+}
+
+// punchAllPeers keeps NAT mappings warm for every known endpoint.
+func (n *Node) punchAllPeers() {
+	n.mu.Lock()
+	targets := make([]netip.AddrPort, 0, len(n.peers))
+	for ip, p := range n.peers {
+		if p.realAddr.IsValid() && ip != serverAddrOf(n) {
+			targets = append(targets, p.realAddr)
+		}
+	}
+	n.mu.Unlock()
+	for _, addr := range targets {
+		n.conn.WriteToUDPAddrPort(punchPacket, addr)
 	}
 }
 

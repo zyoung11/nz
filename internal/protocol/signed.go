@@ -120,6 +120,13 @@ type PeerInfo struct {
 	CanCallBack bool   `json:"can_call_back"`
 }
 
+// PeerIntro tells a machine that another machine wants to reach it,
+// so both sides can punch through NAT at the same time.
+type PeerIntro struct {
+	VPNIP string         `json:"vpn_ip"`
+	Addr  netip.AddrPort `json:"addr"`
+}
+
 // AdminRequest is a management operation sent from an admin machine.
 type AdminRequest struct {
 	Command string `json:"command"`
