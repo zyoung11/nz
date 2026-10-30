@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/netip"
@@ -10,13 +11,15 @@ import (
 	"nz/internal/protocol"
 )
 
-func (n *Node) serve() error {
+func (n *Node) serve(ctx context.Context) error {
 	logx.Success("node started, server %v", n.serverAddr)
 	n.lastServerSeen = time.Now()
 	go n.readFromTUN()
 	go n.keepAliveLoop()
 	go n.serverWatch()
-	select {}
+	<-ctx.Done()
+	logx.Info("node tunnel restarting")
+	return nil
 }
 
 func deliver(ch chan protocol.Envelope, env protocol.Envelope) {

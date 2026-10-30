@@ -176,6 +176,7 @@ func (s *Server) handleJoinProof(body []byte, remote netip.AddrPort) {
 		return
 	}
 	reply := protocol.JoinReply{Result: status}
+	s.rebindDesired(msg.User, msg.Machine, msg.DesiredIP)
 	if status == string(state.MachinePending) {
 		if s.autoApproveAdmin(msg.User, msg.Machine) {
 			reply.Result = string(state.MachineActive)
@@ -297,6 +298,29 @@ func (s *Server) UsersData() (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// rebindDesired moves an active machine when its pinned ip changed.
+func (s *Server) rebindDesired(user, machine string, desired int) {
+	if desired == 0 {
+		return
+	}
+	m, ok := s.st.GetMachine(user, machine)
+	if !ok || m.VPNIP == "" {
+		return
+	}
+	ip, err := netip.ParseAddr(m.VPNIP)
+	if err != nil || int(ip.As4()[3]) == desired {
+		return
+	}
+	newIP, err := s.st.AllocateIP(s.cfg.Subnet, desired)
+	if err != nil {
+		logx.Warn("pin change for %s/%s failed: %v", user, machine, err)
+		return
+	}
+	if err := s.st.SetMachineIP(user, machine, newIP); err == nil {
+		logx.Success("%s/%s moved to %s", user, machine, newIP)
+	}
 }
 
 func (s *Server) desiredOf(user, machine string) int {

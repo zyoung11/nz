@@ -421,7 +421,7 @@ func (s *State) RegisterJoin(user, machine, public, fingerprint string, salt, ve
 			}
 			m.Name = machine
 		}
-		if desired != 0 && m.VPNIP == "" {
+		if desired != 0 {
 			m.DesiredIP = desired
 		}
 		m.LastSeen = time.Now()

@@ -11,7 +11,7 @@ bash "$TESTDIR/podman-up.sh" >/dev/null 2>&1 || {
 }
 sleep 2
 
-for t in t-join t-ip t-p2p t-relay t-block t-trust t-forge t-nat t-rotate t-remote t-ui t-coexist; do
+for t in t-join t-ip t-reload t-p2p t-relay t-block t-trust t-forge t-nat t-rotate t-remote t-ui t-coexist; do
 	info "===== $t ====="
 	if bash "$TESTDIR/$t.sh"; then
 		ok "$t passed"

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -36,16 +37,17 @@ type statusData struct {
 }
 
 type Daemon struct {
-	Version   string
-	cfgPath   string
-	cfg       *config.Config
-	st        *state.State
-	id        *identity.Identity
-	srv       *server.Server
-	ln        net.Listener
-	startedAt time.Time
-	stopCh    chan struct{}
-	stopOnce  sync.Once
+	Version    string
+	cfgPath    string
+	cfg        *config.Config
+	st         *state.State
+	id         *identity.Identity
+	srv        *server.Server
+	nodeCancel context.CancelFunc
+	ln         net.Listener
+	startedAt  time.Time
+	stopCh     chan struct{}
+	stopOnce   sync.Once
 }
 
 // New loads config and state for the daemon at cfgPath.
@@ -112,12 +114,7 @@ func (d *Daemon) Serve(pingback, token string) error {
 		}()
 	}
 	if d.cfg.Mode == "node" {
-		go func() {
-			if err := node.Run(d.cfg, d.st, d.id); err != nil {
-				logx.Error("node stopped: %v", err)
-				d.Stop()
-			}
-		}()
+		d.startNode()
 	}
 	if pingback != "" {
 		notifyPingback(pingback, token)
@@ -168,12 +165,49 @@ func (d *Daemon) handle(uid uint32, req ipc.Request) ipc.Response {
 
 // Stop terminates the daemon loop.
 func (d *Daemon) Stop() {
-	d.stopOnce.Do(func() { close(d.stopCh) })
+	d.stopOnce.Do(func() {
+		if d.nodeCancel != nil {
+			d.nodeCancel()
+		}
+		close(d.stopCh)
+	})
 }
 
 func (d *Daemon) handleStop() ipc.Response {
 	d.Stop()
 	return ipc.Response{OK: true}
+}
+
+// checkReloadable rejects config changes that need a service restart.
+func (d *Daemon) checkReloadable(cfg *config.Config) error {
+	if cfg.Mode != d.cfg.Mode {
+		return fmt.Errorf("mode change needs a service reinstall")
+	}
+	if cfg.Mode == "node" {
+		return nil
+	}
+	if cfg.Port != d.cfg.Port {
+		return fmt.Errorf("port change needs a service restart")
+	}
+	if cfg.Subnet != d.cfg.Subnet {
+		return fmt.Errorf("subnet change needs a service restart")
+	}
+	if cfg.Admin.Name != d.cfg.Admin.Name {
+		return fmt.Errorf("admin.name change needs a service restart")
+	}
+	return nil
+}
+
+func (d *Daemon) startNode() {
+	ctx, cancel := context.WithCancel(context.Background())
+	d.nodeCancel = cancel
+	cfg := d.cfg
+	go func() {
+		if err := node.Run(ctx, cfg, d.st, d.id); err != nil {
+			logx.Error("node stopped: %v", err)
+			d.Stop()
+		}
+	}()
 }
 
 func (d *Daemon) handleReload() ipc.Response {
@@ -184,9 +218,24 @@ func (d *Daemon) handleReload() ipc.Response {
 	if err := cfg.Validate(); err != nil {
 		return ipc.Response{OK: false, Error: fmt.Sprintf("config rejected, keep running with old config: %v", err)}
 	}
+	if err := d.checkReloadable(cfg); err != nil {
+		return ipc.Response{OK: false, Error: fmt.Sprintf("config rejected, keep running with old config: %v", err)}
+	}
+	if cfg.Mode == "server" && cfg.Admin.Password != d.cfg.Admin.Password {
+		salt := identity.UserSalt(cfg.Admin.Name)
+		if err := d.st.SetVerifier(cfg.Admin.Name, salt, identity.Verifier(cfg.Admin.Password, salt)); err != nil {
+			return ipc.Response{OK: false, Error: fmt.Sprintf("config rejected, keep running with old config: %v", err)}
+		}
+	}
 	d.cfg = cfg
 	if d.srv != nil {
 		d.srv.SetConfig(cfg)
+	}
+	if d.cfg.Mode == "node" {
+		if d.nodeCancel != nil {
+			d.nodeCancel()
+		}
+		d.startNode()
 	}
 	logx.Success("config reloaded")
 	return ipc.Response{OK: true}

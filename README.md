@@ -84,6 +84,14 @@ GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o n0.exe ./cmd/n0
 
 目标语法统一：`friend` 指用户，`friend/laptop` 指机器。管理命令只对管理员开放。
 
+## 热加载规则
+
+`n0 reload` 对字段的处理分两类。
+
+node 模式全字段生效。reload 后隧道以新配置重启，`user`、`password`、`name`、`domain`、`ip` 的变化立即可用。
+
+server 模式只接受 `admin.password` 热更。`port`、`subnet`、`admin.name` 和 `mode` 是结构性参数，reload 拒绝并提示重装服务。这些参数需要 `n0 uninstall` 加 `n0 install`。
+
 ## 加入流程
 
 朋友的机器需要你批准才能入网。流程如下。

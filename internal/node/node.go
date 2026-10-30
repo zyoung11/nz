@@ -81,8 +81,8 @@ type Node struct {
 	lastServerSeen time.Time
 }
 
-// Run joins the network and forwards traffic until the process stops.
-func Run(cfg *config.Config, st *state.State, id *identity.Identity) error {
+// Run joins the network and forwards traffic until the context ends.
+func Run(ctx context.Context, cfg *config.Config, st *state.State, id *identity.Identity) error {
 	if cfg.Mode != "node" {
 		return fmt.Errorf("node mode required")
 	}
@@ -107,7 +107,7 @@ func Run(cfg *config.Config, st *state.State, id *identity.Identity) error {
 	if err := n.join(); err != nil {
 		return err
 	}
-	return n.serve()
+	return n.serve(ctx)
 }
 
 func (n *Node) serverKeys() (signPub, exchPub []byte) {
