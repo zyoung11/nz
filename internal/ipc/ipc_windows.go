@@ -18,3 +18,8 @@ func Listen(_ string) (net.Listener, error) {
 func Dial(_ string) (net.Conn, error) {
 	return nil, errNotImplemented
 }
+
+// connUID reports the caller, named pipes enforce access in the ACL.
+func connUID(_ net.Conn) uint32 {
+	return 0
+}

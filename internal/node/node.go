@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -262,15 +263,24 @@ func (n *Node) tryJoin() (string, error) {
 }
 
 func (n *Node) acceptServerKeys(serverPub []byte) {
-	if len(serverPub) != identity.PublicBlobSize || len(n.auth.ServerSignPub) > 0 {
+	if len(serverPub) != identity.PublicBlobSize {
 		return
 	}
 	signPub, exchPub, err := identity.SplitPublic(serverPub)
 	if err != nil {
 		return
 	}
+	if bytes.Equal(n.auth.ServerSignPub, signPub) {
+		return
+	}
+	if len(n.auth.ServerSignPub) > 0 {
+		logx.Warn("server key changed, updating the stored key")
+	}
 	n.auth.ServerSignPub = signPub
 	n.auth.ServerExchPub = exchPub
+	n.mu.Lock()
+	delete(n.peers, serverAddrOf(n))
+	n.mu.Unlock()
 	if err := n.saveAuth(); err != nil {
 		logx.Warn("%v", err)
 	}

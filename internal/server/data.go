@@ -155,6 +155,13 @@ func (s *Server) handlePeerQuery(m protocol.SignedMessage, src state.Machine) {
 
 func (s *Server) handleMachineList(m protocol.SignedMessage, src state.Machine) {
 	var list protocol.MachineListRpy
+	list.Peers = append(list.Peers, protocol.PeerInfo{
+		User:    s.cfg.Admin.Name,
+		Machine: "server",
+		VPNIP:   s.serverIP().String(),
+		Status:  "local",
+		Trusted: true,
+	})
 	for _, other := range s.st.ActiveMachines() {
 		if !s.AllowRelay(src, other) {
 			continue
@@ -183,6 +190,57 @@ func (s *Server) handleMachineList(m protocol.SignedMessage, src state.Machine) 
 		Payload: protocol.EncodeJSON(list),
 	}
 	s.sendSigned(signed, s.ipEndpoint(m.SrcIP))
+}
+
+// readFromTUN forwards packets leaving the server TUN to the target
+// machine, so replies to node traffic can flow back.
+func (s *Server) readFromTUN() {
+	packet := make([]byte, 65536)
+	for {
+		nread, err := s.tun.Read(packet)
+		if err != nil {
+			return
+		}
+		if nread < 20 {
+			continue
+		}
+		raw := packet[:nread]
+		if raw[0]>>4 != 4 {
+			continue
+		}
+		dst := netip.AddrFrom4([4]byte{raw[16], raw[17], raw[18], raw[19]})
+		if dst == s.serverIP() {
+			continue
+		}
+		s.sendLocalData(dst, raw)
+	}
+}
+
+func (s *Server) sendLocalData(dst netip.Addr, raw []byte) {
+	m, ok := s.st.FindMachineByIP(dst.String())
+	if !ok {
+		return
+	}
+	if !s.AllowRelay(s.ServerMachine(), m) {
+		logx.Warn("data server -> %s/%s denied by policy", m.User, m.Name)
+		return
+	}
+	addr := s.ipEndpoint(dst)
+	if !addr.IsValid() {
+		return
+	}
+	_, exchPub := machineKeys(m)
+	key, err := s.id.SharedKey(exchPub)
+	if err != nil {
+		return
+	}
+	cipher, err := protocol.Seal(key, raw)
+	if err != nil {
+		return
+	}
+	msg := protocol.SignedMessage{Type: protocol.TypeData, SrcIP: s.serverIP(), DstIP: dst, Payload: cipher}
+	body := protocol.MarshalSigned(msg, s.id.Sign)
+	s.sendRaw(protocol.Envelope{Type: protocol.TypeData, Body: body}, addr)
 }
 
 func (s *Server) sendSigned(m protocol.SignedMessage, addr netip.AddrPort) {

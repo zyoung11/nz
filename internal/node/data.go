@@ -49,6 +49,10 @@ func (n *Node) readFromUDP() {
 		case protocol.TypeApproveNotify:
 			deliver(n.approveCh, env)
 		case protocol.TypeKeepAlive:
+			signed, sig, err := protocol.ParseSigned(env.Body)
+			if err == nil && !n.verifyServer(signed, sig) {
+				n.serverAuthFailed()
+			}
 		}
 	}
 }
@@ -195,6 +199,7 @@ func QueryMachines() ([]protocol.PeerInfo, error) {
 		return nil, err
 	}
 	if !n.verifyServer(signed, sig) {
+		n.serverAuthFailed()
 		return nil, fmt.Errorf("bad server signature")
 	}
 	var list protocol.MachineListRpy
@@ -236,6 +241,13 @@ func serverAddrOf(n *Node) netip.Addr {
 
 func (n *Node) verifyServer(m protocol.SignedMessage, sig []byte) bool {
 	return protocol.VerifySigned(m, sig, n.auth.ServerSignPub)
+}
+
+// serverAuthFailed marks the server link stale so the watch loop
+// rejoins and picks up a rotated server key.
+func (n *Node) serverAuthFailed() {
+	logx.Warn("server signature invalid, rejoining")
+	n.lastServerSeen = time.Time{}
 }
 
 func (n *Node) handleData(env protocol.Envelope) {

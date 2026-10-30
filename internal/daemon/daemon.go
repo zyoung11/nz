@@ -139,7 +139,16 @@ func notifyPingback(addr, token string) {
 	fmt.Fprintf(conn, "%s\n", token)
 }
 
-func (d *Daemon) handle(req ipc.Request) ipc.Response {
+var readOnlyCommands = map[string]bool{
+	"status": true,
+	"list":   true,
+	"users":  true,
+}
+
+func (d *Daemon) handle(uid uint32, req ipc.Request) ipc.Response {
+	if !readOnlyCommands[req.Command] && uid != 0 {
+		return ipc.Response{OK: false, Error: "this command needs root, run with sudo"}
+	}
 	switch req.Command {
 	case "stop":
 		return d.handleStop()
@@ -221,7 +230,14 @@ func (d *Daemon) handleList() ipc.Response {
 		return jsonData(peers)
 	}
 	_, machines := d.st.Snapshot()
-	peers := make([]protocol.PeerInfo, 0, len(machines))
+	peers := make([]protocol.PeerInfo, 0, len(machines)+1)
+	peers = append(peers, protocol.PeerInfo{
+		User:    d.cfg.Admin.Name,
+		Machine: "server",
+		VPNIP:   serverIP(d),
+		Status:  "local",
+		Trusted: true,
+	})
 	for _, m := range machines {
 		status := "offline"
 		if time.Since(m.LastSeen) < 15*time.Second {
@@ -300,6 +316,14 @@ func (d *Daemon) approveMachine(user, machine string) error {
 		d.srv.NotifyApprove(user, machine)
 	}
 	return nil
+}
+
+func serverIP(d *Daemon) string {
+	prefix, err := netip.ParsePrefix(d.cfg.Subnet)
+	if err != nil {
+		return ""
+	}
+	return prefix.Addr().Next().String()
 }
 
 func connStateOf(d *Daemon) string {

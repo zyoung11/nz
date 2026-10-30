@@ -47,6 +47,7 @@ func New(cfg *config.Config, st *state.State, id *identity.Identity) *Server {
 // SetTUN attaches the local TUN device for traffic to the server itself.
 func (s *Server) SetTUN(dev tun.Device) {
 	s.tun = dev
+	go s.readFromTUN()
 }
 
 // SetConfig swaps in a reloaded config.

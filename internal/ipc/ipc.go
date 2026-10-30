@@ -22,7 +22,7 @@ type Response struct {
 	Data  string `json:"data"`
 }
 
-type Handler func(Request) Response
+type Handler func(uid uint32, req Request) Response
 
 // SocketPath returns the admin socket path next to the running binary.
 func SocketPath() string {
@@ -67,6 +67,7 @@ func Serve(ln net.Listener, handler Handler) {
 
 func serveConn(conn net.Conn, handler Handler) {
 	defer conn.Close()
+	uid := connUID(conn)
 	reader := bufio.NewReader(conn)
 	for {
 		line, err := reader.ReadBytes('\n')
@@ -78,7 +79,7 @@ func serveConn(conn net.Conn, handler Handler) {
 			writeResponse(conn, Response{OK: false, Error: "invalid request"})
 			continue
 		}
-		writeResponse(conn, handler(req))
+		writeResponse(conn, handler(uid, req))
 	}
 }
 
