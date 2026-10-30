@@ -18,9 +18,11 @@ func install(cfgPath string) error {
 		return err
 	}
 	binPath := fmt.Sprintf(`"%s" run --config "%s"`, exe, cfgPath)
-	if out, err := exec.Command("sc", "create", serviceName,
-		"binPath=", binPath, "start=", "auto").CombinedOutput(); err != nil {
-		return fmt.Errorf("sc create failed: %v (%s)", err, string(out))
+	if exec.Command("sc", "query", serviceName).Run() != nil {
+		if out, err := exec.Command("sc", "create", serviceName,
+			"binPath=", binPath, "start=", "auto").CombinedOutput(); err != nil {
+			return fmt.Errorf("sc create failed: %v (%s)", err, string(out))
+		}
 	}
 	if out, err := exec.Command("sc", "failure", serviceName,
 		"reset=", "86400",
