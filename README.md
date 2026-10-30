@@ -124,7 +124,7 @@ Linux 端 `n0 install` 生成 systemd unit，含 `Restart=always`。无 systemd 
 
 ## 日志
 
-常驻进程把日志写入 `n0.log`，与二进制同目录。
+默认不写日志文件。需要时给 `run` 或 `start` 加 `--log`，日志写入二进制同目录的 `n0.log`。
 
 | 前缀 | 含义 |
 | --- | --- |

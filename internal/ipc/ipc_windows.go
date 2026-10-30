@@ -19,6 +19,11 @@ func Dial(_ string) (net.Conn, error) {
 	return nil, errNotImplemented
 }
 
+// socketPath returns the admin named pipe location.
+func socketPath() string {
+	return `\\.\pipe\n0`
+}
+
 // connUID reports the caller, named pipes enforce access in the ACL.
 func connUID(_ net.Conn) uint32 {
 	return 0

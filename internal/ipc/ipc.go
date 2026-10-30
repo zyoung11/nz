@@ -5,10 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"os"
-	"path/filepath"
-
-	"nz/internal/config"
 )
 
 type Request struct {
@@ -24,13 +20,9 @@ type Response struct {
 
 type Handler func(uid uint32, req Request) Response
 
-// SocketPath returns the admin socket path next to the running binary.
+// SocketPath returns the admin socket location for this platform.
 func SocketPath() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return config.SocketFileName
-	}
-	return filepath.Join(filepath.Dir(exe), config.SocketFileName)
+	return socketPath()
 }
 
 // Call sends one request over conn and returns the response.

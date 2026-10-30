@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"nz/internal/ipc"
 )
 
 const unitName = "n0.service"
@@ -54,6 +56,7 @@ func uninstall() error {
 	}
 	exec.Command("systemctl", "stop", "n0").Run()
 	exec.Command("systemctl", "disable", "n0").Run()
+	os.Remove(ipc.SocketPath())
 	unitPath := filepath.Join("/etc/systemd/system", unitName)
 	if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove %s: %w", unitPath, err)

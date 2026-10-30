@@ -31,11 +31,11 @@ start_container node-b '{"mode":"node","user":"friend","password":"friendpw","na
 start_container node-c '{"mode":"node","user":"friend","password":"friendpw","name":"pc","domain":"n0-server","port":4399}'
 
 info "starting daemons"
-podman exec -d n0-server n0 run --config /cfg/config.json
+podman exec -d n0-server n0 run --config /cfg/config.json --log
 sleep 1
-podman exec -d n0-node-a n0 run --config /cfg/config.json
-podman exec -d n0-node-b n0 run --config /cfg/config.json
-podman exec -d n0-node-c n0 run --config /cfg/config.json
+podman exec -d n0-node-a n0 run --config /cfg/config.json --log
+podman exec -d n0-node-b n0 run --config /cfg/config.json --log
+podman exec -d n0-node-c n0 run --config /cfg/config.json --log
 
 sleep 1
 ok "stack up: server node-a node-b node-c"
