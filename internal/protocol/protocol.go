@@ -13,20 +13,20 @@ const Version byte = 0x03
 type MsgType byte
 
 const (
-	TypeJoinRequest   MsgType = 0x01
-	TypeJoinChallenge MsgType = 0x02
-	TypeJoinProof     MsgType = 0x03
-	TypeJoinReply     MsgType = 0x04
-	TypeApproveNotify MsgType = 0x05
-	TypeKeepAlive     MsgType = 0x10
-	TypeData          MsgType = 0x11
-	TypeRelayData     MsgType = 0x12
-	TypePeerQuery     MsgType = 0x20
-	TypePeerQueryRpy  MsgType = 0x21
-	TypePeerIntro     MsgType = 0x22
-	TypeMachineList   MsgType = 0x30
+	TypeJoinRequest    MsgType = 0x01
+	TypeJoinChallenge  MsgType = 0x02
+	TypeJoinProof      MsgType = 0x03
+	TypeJoinReply      MsgType = 0x04
+	TypeApproveNotify  MsgType = 0x05
+	TypeKeepAlive      MsgType = 0x10
+	TypeData           MsgType = 0x11
+	TypeRelayData      MsgType = 0x12
+	TypePeerQuery      MsgType = 0x20
+	TypePeerQueryRpy   MsgType = 0x21
+	TypePeerIntro      MsgType = 0x22
+	TypeMachineList    MsgType = 0x30
 	TypeMachineListRpy MsgType = 0x31
-	TypeDisconnect    MsgType = 0x3f
+	TypeDisconnect     MsgType = 0x3f
 )
 
 const headerLen = 6
@@ -58,7 +58,9 @@ func Unmarshal(data []byte) (Envelope, error) {
 	if uint32(len(data)-headerLen) != bodyLen {
 		return Envelope{}, fmt.Errorf("body length %d, want %d", len(data)-headerLen, bodyLen)
 	}
-	return Envelope{Type: MsgType(data[1]), Body: data[6:]}, nil
+	body := make([]byte, bodyLen)
+	copy(body, data[6:])
+	return Envelope{Type: MsgType(data[1]), Body: body}, nil
 }
 
 type JoinRequest struct {
@@ -81,9 +83,9 @@ type JoinProof struct {
 }
 
 type JoinReply struct {
-	Result   string `json:"result"`
-	Error    string `json:"error,omitempty"`
-	VPNIP    string `json:"vpn_ip,omitempty"`
+	Result    string `json:"result"`
+	Error     string `json:"error,omitempty"`
+	VPNIP     string `json:"vpn_ip,omitempty"`
 	ServerPub []byte `json:"server_pub,omitempty"`
 }
 
@@ -92,8 +94,8 @@ type ApproveNotify struct {
 }
 
 const (
-	ResultActive  = "active"
-	ResultPending = "pending"
+	ResultActive   = "active"
+	ResultPending  = "pending"
 	ResultRejected = "rejected"
 )
 

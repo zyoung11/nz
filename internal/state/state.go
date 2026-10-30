@@ -470,13 +470,20 @@ func (s *State) AllocateIP(subnet string) (string, error) {
 	return "", fmt.Errorf("subnet %s has no free address", subnet)
 }
 
-// EnsureAdmin keeps the admin user present and active.
-func (s *State) EnsureAdmin(name string) error {
+// EnsureAdmin keeps the admin user present and active. The salt and
+// verifier are stored only when the admin user is created, so admin
+// machines can register with password proof.
+func (s *State) EnsureAdmin(name string, salt, verifier []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u := s.findUserLocked(name)
 	if u == nil {
-		s.Users = append(s.Users, User{Name: name, Status: UserActive, JoinedAt: time.Now()})
+		s.Users = append(s.Users, User{
+			Name:     name,
+			Salt:     base64.StdEncoding.EncodeToString(salt),
+			Verifier: base64.StdEncoding.EncodeToString(verifier),
+			Status:   UserActive, JoinedAt: time.Now(),
+		})
 		return s.saveLocked()
 	}
 	if u.Status != UserActive {

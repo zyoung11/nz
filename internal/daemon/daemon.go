@@ -74,7 +74,9 @@ func New(cfgPath, version string) (*Daemon, error) {
 		stopCh:    make(chan struct{}),
 	}
 	if cfg.Mode == "server" {
-		if err := st.EnsureAdmin(cfg.Admin.Name); err != nil {
+		salt := identity.UserSalt(cfg.Admin.Name)
+		verifier := identity.Verifier(cfg.Admin.Password, salt)
+		if err := st.EnsureAdmin(cfg.Admin.Name, salt, verifier); err != nil {
 			return nil, err
 		}
 		d.srv = server.New(cfg, st, id)

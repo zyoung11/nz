@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"time"
 
 	"nz/internal/config"
 	"nz/internal/identity"
@@ -27,6 +28,7 @@ type Server struct {
 	nonces      map[string][]byte
 	endpoints   map[string]netip.AddrPort
 	ipEndpoints map[netip.Addr]netip.AddrPort
+	flows       map[string]time.Time
 }
 
 // New creates a server for the given config, state and identity.
@@ -38,6 +40,7 @@ func New(cfg *config.Config, st *state.State, id *identity.Identity) *Server {
 		nonces:      make(map[string][]byte),
 		endpoints:   make(map[string]netip.AddrPort),
 		ipEndpoints: make(map[netip.Addr]netip.AddrPort),
+		flows:       make(map[string]time.Time),
 	}
 }
 
@@ -171,6 +174,11 @@ func (s *Server) handleJoinProof(body []byte, remote netip.AddrPort) {
 		return
 	}
 	reply := protocol.JoinReply{Result: status}
+	if status == string(state.MachinePending) {
+		if s.autoApproveAdmin(msg.User, msg.Machine) {
+			reply.Result = string(state.MachineActive)
+		}
+	}
 	if m, ok := s.st.GetMachine(msg.User, msg.Machine); ok && m.VPNIP != "" {
 		reply.VPNIP = m.VPNIP
 	}
@@ -193,7 +201,30 @@ func (s *Server) NotifyApprove(user, machine string) {
 	}
 	s.sendEnvelope(addr, protocol.TypeApproveNotify,
 		protocol.EncodeJSON(protocol.ApproveNotify{VPNIP: m.VPNIP}))
+	if ip, err := netip.ParseAddr(m.VPNIP); err == nil {
+		s.rememberIPEndpoint(ip, addr)
+	}
 	logx.Success("approval pushed to %s/%s", user, machine)
+}
+
+// autoApproveAdmin activates admin machines without approval and
+// allocates their addresses immediately.
+func (s *Server) autoApproveAdmin(user, machine string) bool {
+	if user != s.adminName() {
+		return false
+	}
+	if err := s.st.Allow(user, machine); err != nil {
+		return false
+	}
+	ip, err := s.st.AllocateIP(s.cfg.Subnet)
+	if err != nil {
+		return false
+	}
+	if err := s.st.SetMachineIP(user, machine, ip); err != nil {
+		return false
+	}
+	logx.Success("admin machine %s/%s approved as %s", user, machine, ip)
+	return true
 }
 
 func (s *Server) rememberEndpoint(user, machine string, addr netip.AddrPort) {
@@ -204,6 +235,11 @@ func (s *Server) rememberEndpoint(user, machine string, addr netip.AddrPort) {
 
 func (s *Server) sendJoinReply(addr netip.AddrPort, reply protocol.JoinReply) {
 	reply.ServerPub = s.id.PublicBlob()
+	if reply.VPNIP != "" {
+		if ip, err := netip.ParseAddr(reply.VPNIP); err == nil {
+			s.rememberIPEndpoint(ip, addr)
+		}
+	}
 	s.sendEnvelope(addr, protocol.TypeJoinReply, protocol.EncodeJSON(reply))
 }
 

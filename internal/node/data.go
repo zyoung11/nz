@@ -15,8 +15,40 @@ func (n *Node) serve() error {
 	go n.readFromTUN()
 	go n.keepAliveLoop()
 	go n.serverWatch()
-	n.readFromUDP()
-	return nil
+	select {}
+}
+
+func deliver(ch chan protocol.Envelope, env protocol.Envelope) {
+	select {
+	case ch <- env:
+	default:
+	}
+}
+
+func (n *Node) readFromUDP() {
+	buf := make([]byte, 65536)
+	for {
+		nread, _, err := n.conn.ReadFromUDPAddrPort(buf)
+		if err != nil {
+			return
+		}
+		env, err := protocol.Unmarshal(buf[:nread])
+		if err != nil {
+			continue
+		}
+		n.lastServerSeen = time.Now()
+		switch env.Type {
+		case protocol.TypeData, protocol.TypeRelayData:
+			n.handleData(env)
+		case protocol.TypePeerQueryRpy:
+			deliver(n.queryReplyCh, env)
+		case protocol.TypeJoinChallenge, protocol.TypeJoinReply:
+			deliver(n.joinReplyCh, env)
+		case protocol.TypeApproveNotify:
+			deliver(n.approveCh, env)
+		case protocol.TypeKeepAlive:
+		}
+	}
 }
 
 func (n *Node) readFromTUN() {
@@ -46,6 +78,11 @@ func (n *Node) sendTo(dst netip.Addr, raw []byte) {
 	if p == nil {
 		return
 	}
+	if !p.canCall && !isReplyPacket(raw) {
+		logx.Warn("new call to %v blocked by policy", dst)
+		n.dropPeer(dst)
+		return
+	}
 	cipher, err := protocol.Seal(p.key, raw)
 	if err != nil {
 		logx.Warn("%v", err)
@@ -56,7 +93,6 @@ func (n *Node) sendTo(dst netip.Addr, raw []byte) {
 	env := protocol.Envelope{Type: protocol.TypeData, Body: body}
 	addr := n.serverAddr
 	if p.realAddr.IsValid() {
-		env.Type = protocol.TypeData
 		addr = p.realAddr
 	} else {
 		env.Type = protocol.TypeRelayData
@@ -64,11 +100,16 @@ func (n *Node) sendTo(dst netip.Addr, raw []byte) {
 	n.conn.WriteToUDPAddrPort(protocol.Marshal(env), addr)
 }
 
+const peerRefreshAfter = time.Second
+
 func (n *Node) ensurePeer(dst netip.Addr) *peer {
+	if dst == serverAddrOf(n) {
+		return n.ensureServerPeer()
+	}
 	n.mu.Lock()
 	p := n.peers[dst]
 	n.mu.Unlock()
-	if p != nil {
+	if p != nil && time.Since(p.lastSeen) < peerRefreshAfter {
 		return p
 	}
 	answer, err := n.queryPeer(dst)
@@ -80,19 +121,49 @@ func (n *Node) ensurePeer(dst netip.Addr) *peer {
 		logx.Warn("unknown target %v", dst)
 		return nil
 	}
-	signPub, exchPub := answer.SignPub, answer.ExchPub
-	key, err := n.id.SharedKey(exchPub)
+	key, err := n.id.SharedKey(answer.ExchPub)
 	if err != nil {
 		logx.Warn("%v", err)
 		return nil
 	}
-	p = &peer{signPub: signPub, exchPub: exchPub, key: key, lastSeen: time.Now()}
+	if p == nil {
+		p = &peer{}
+	}
+	p.signPub = answer.SignPub
+	p.exchPub = answer.ExchPub
+	p.key = key
+	p.canCall = answer.CanCall
+	p.canCallBack = answer.CanCallBack
+	p.lastSeen = time.Now()
+	p.realAddr = netip.AddrPort{}
 	if answer.HasAddr {
 		p.realAddr = answer.Addr
 	}
 	n.mu.Lock()
 	n.peers[dst] = p
 	n.mu.Unlock()
+	return p
+}
+
+func (n *Node) ensureServerPeer() *peer {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if p, ok := n.peers[serverAddrOf(n)]; ok {
+		return p
+	}
+	key, err := n.id.SharedKey(n.auth.ServerExchPub)
+	if err != nil {
+		logx.Warn("server key exchange failed: %v", err)
+		return nil
+	}
+	p := &peer{
+		signPub:  n.auth.ServerSignPub,
+		exchPub:  n.auth.ServerExchPub,
+		key:      key,
+		realAddr: n.serverAddr,
+		lastSeen: time.Now(),
+	}
+	n.peers[serverAddrOf(n)] = p
 	return p
 }
 
@@ -108,19 +179,18 @@ func (n *Node) queryPeer(dst netip.Addr) (protocol.PeerAnswer, error) {
 		protocol.Marshal(protocol.Envelope{Type: protocol.TypePeerQuery, Body: body}),
 		n.serverAddr)
 
-	select {
-	case env := <-n.queryReplyCh:
-		signed, sig, err := protocol.ParseSigned(env.Body)
-		if err != nil {
-			return protocol.PeerAnswer{}, err
-		}
-		if !n.verifyServer(signed, sig) {
-			return protocol.PeerAnswer{}, fmt.Errorf("bad server signature")
-		}
-		return protocol.ParsePeerAnswer(signed.Payload)
-	case <-time.After(peerQueryTimeout):
-		return protocol.PeerAnswer{}, fmt.Errorf("peer query timeout")
+	env, err := waitEnvelope(n.queryReplyCh, peerQueryTimeout)
+	if err != nil {
+		return protocol.PeerAnswer{}, err
 	}
+	signed, sig, err := protocol.ParseSigned(env.Body)
+	if err != nil {
+		return protocol.PeerAnswer{}, err
+	}
+	if !n.verifyServer(signed, sig) {
+		return protocol.PeerAnswer{}, fmt.Errorf("bad server signature")
+	}
+	return protocol.ParsePeerAnswer(signed.Payload)
 }
 
 func serverAddrOf(n *Node) netip.Addr {
@@ -131,34 +201,6 @@ func (n *Node) verifyServer(m protocol.SignedMessage, sig []byte) bool {
 	return protocol.VerifySigned(m, sig, n.auth.ServerSignPub)
 }
 
-func (n *Node) readFromUDP() {
-	buf := make([]byte, 65536)
-	for {
-		nread, from, err := n.conn.ReadFromUDPAddrPort(buf)
-		if err != nil {
-			return
-		}
-		env, err := protocol.Unmarshal(buf[:nread])
-		if err != nil {
-			continue
-		}
-		n.lastServerSeen = time.Now()
-		switch env.Type {
-		case protocol.TypeData, protocol.TypeRelayData:
-			n.handleData(env)
-		case protocol.TypePeerQueryRpy:
-			select {
-			case n.queryReplyCh <- env:
-			default:
-			}
-		case protocol.TypeKeepAlive:
-		case protocol.TypeApproveNotify:
-			n.handleApproveNotify(env)
-		}
-		_ = from
-	}
-}
-
 func (n *Node) handleData(env protocol.Envelope) {
 	signed, sig, err := protocol.ParseSigned(env.Body)
 	if err != nil {
@@ -166,7 +208,8 @@ func (n *Node) handleData(env protocol.Envelope) {
 	}
 	p := n.lookupPeer(signed.SrcIP)
 	if p == nil {
-		logx.Warn("data from unknown peer %v dropped", signed.SrcIP)
+		go n.ensurePeer(signed.SrcIP)
+		logx.Warn("data from unknown peer %v dropped, discovering", signed.SrcIP)
 		return
 	}
 	if !protocol.VerifySigned(signed, sig, p.signPub) {
@@ -181,10 +224,14 @@ func (n *Node) handleData(env protocol.Envelope) {
 		logx.Warn("decrypt from %v failed: %v", signed.SrcIP, err)
 		return
 	}
+	if !p.canCallBack && !isReplyPacket(plain) {
+		logx.Warn("new call from %v blocked by policy", signed.SrcIP)
+		go n.ensurePeer(signed.SrcIP)
+		return
+	}
 	if _, err := n.tun.Write(plain); err != nil {
 		logx.Warn("tun write failed: %v", err)
 	}
-	p.lastSeen = time.Now()
 }
 
 func (n *Node) lookupPeer(ip netip.Addr) *peer {
@@ -193,17 +240,10 @@ func (n *Node) lookupPeer(ip netip.Addr) *peer {
 	return n.peers[ip]
 }
 
-func (n *Node) handleApproveNotify(env protocol.Envelope) {
-	var notify protocol.ApproveNotify
-	if err := protocol.DecodeJSON(env.Body, &notify); err != nil {
-		return
-	}
-	if n.vpnIP.IsValid() {
-		return
-	}
-	if err := n.adoptVPNIP(notify.VPNIP); err != nil {
-		logx.Warn("%v", err)
-	}
+func (n *Node) dropPeer(ip netip.Addr) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.peers, ip)
 }
 
 func (n *Node) keepAliveLoop() {

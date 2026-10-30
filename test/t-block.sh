@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+source "$(dirname "$0")/lib.sh"
+
+info "block and unblock"
+
+ip_laptop=$(machine_ip_by_name laptop)
+ip_pc=$(machine_ip_by_name pc)
+
+n0s block friend/laptop
+sleep 1
+
+if ping_vpn node-c "$ip_laptop"; then
+	err "blocked machine still reachable"
+	FAILS=$((FAILS + 1))
+else
+	ok "blocked machine unreachable"
+fi
+
+if ping_vpn node-b "$ip_pc"; then
+	err "blocked machine still sends traffic"
+	FAILS=$((FAILS + 1))
+else
+	ok "blocked machine cannot send traffic"
+fi
+
+n0s unblock friend/laptop
+sleep 2
+start_node_daemon node-b
+wait_joined node-b 10
+
+if ping_vpn node-c "$ip_laptop"; then
+	ok "unblocked machine reachable again"
+else
+	err "unblocked machine still unreachable"
+	FAILS=$((FAILS + 1))
+fi
+
+finish

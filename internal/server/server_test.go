@@ -56,7 +56,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		st:     st,
 		conn:   conn,
 		client: client,
-		addr:   netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"),
+		addr: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"),
 			uint16(conn.LocalAddr().(*net.UDPAddr).Port)),
 	}
 }

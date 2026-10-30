@@ -27,18 +27,18 @@ const (
 )
 
 type authData struct {
-	Salt          []byte `json:"salt"`
-	Verifier      []byte `json:"verifier"`
 	ServerSignPub []byte `json:"server_sign_pub,omitempty"`
 	ServerExchPub []byte `json:"server_exch_pub,omitempty"`
 }
 
 type peer struct {
-	signPub  []byte
-	exchPub  []byte
-	key      []byte
-	realAddr netip.AddrPort
-	lastSeen time.Time
+	signPub     []byte
+	exchPub     []byte
+	key         []byte
+	realAddr    netip.AddrPort
+	canCall     bool
+	canCallBack bool
+	lastSeen    time.Time
 }
 
 type Node struct {
@@ -55,6 +55,8 @@ type Node struct {
 	mu             sync.Mutex
 	peers          map[netip.Addr]*peer
 	queryReplyCh   chan protocol.Envelope
+	joinReplyCh    chan protocol.Envelope
+	approveCh      chan protocol.Envelope
 	lastServerSeen time.Time
 }
 
@@ -67,7 +69,7 @@ func Run(cfg *config.Config, keyPath string) error {
 	if err != nil {
 		return err
 	}
-	auth, err := loadAuth(authPathOf(keyPath), cfg.Password)
+	auth, err := loadAuth(authPathOf(keyPath))
 	if err != nil {
 		return err
 	}
@@ -78,10 +80,13 @@ func Run(cfg *config.Config, keyPath string) error {
 		authPath:     authPathOf(keyPath),
 		peers:        make(map[netip.Addr]*peer),
 		queryReplyCh: make(chan protocol.Envelope, 1),
+		joinReplyCh:  make(chan protocol.Envelope, 1),
+		approveCh:    make(chan protocol.Envelope, 1),
 	}
 	if err := n.connect(); err != nil {
 		return err
 	}
+	go n.readFromUDP()
 	if err := n.join(); err != nil {
 		return err
 	}
@@ -92,17 +97,13 @@ func authPathOf(keyPath string) string {
 	return filepath.Join(filepath.Dir(keyPath), "n0.auth.json")
 }
 
-func loadAuth(path, password string) (*authData, error) {
+func loadAuth(path string) (*authData, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("failed to read auth file %s: %w", path, err)
+		if os.IsNotExist(err) {
+			return &authData{}, nil
 		}
-		salt, err := identity.NewSalt()
-		if err != nil {
-			return nil, err
-		}
-		return &authData{Salt: salt, Verifier: identity.Verifier(password, salt)}, nil
+		return nil, fmt.Errorf("failed to read auth file %s: %w", path, err)
 	}
 	var a authData
 	if err := json.Unmarshal(data, &a); err != nil {
@@ -120,6 +121,12 @@ func (n *Node) saveAuth() error {
 		return fmt.Errorf("failed to write auth file %s: %w", n.authPath, err)
 	}
 	return nil
+}
+
+// verifier derives the user verifier, identical on every machine of
+// the same user because the salt depends on the user name only.
+func (n *Node) verifier() []byte {
+	return identity.Verifier(n.cfg.Password, identity.UserSalt(n.cfg.User))
 }
 
 func (n *Node) connect() error {
@@ -172,17 +179,16 @@ func (n *Node) join() error {
 }
 
 func (n *Node) tryJoin() (string, error) {
+	verifier := n.verifier()
 	req := protocol.JoinRequest{
-		User:    n.cfg.User,
-		Machine: n.cfg.Name,
-		Public:  n.id.PublicBlob(),
-	}
-	if len(n.auth.ServerSignPub) == 0 {
-		req.Salt = n.auth.Salt
-		req.Verifier = n.auth.Verifier
+		User:     n.cfg.User,
+		Machine:  n.cfg.Name,
+		Public:   n.id.PublicBlob(),
+		Salt:     identity.UserSalt(n.cfg.User),
+		Verifier: verifier,
 	}
 	n.sendEnvelope(protocol.TypeJoinRequest, protocol.EncodeJSON(req))
-	env, err := n.recvEnvelope(joinTimeout)
+	env, err := waitEnvelope(n.joinReplyCh, joinTimeout)
 	if err != nil {
 		return "", err
 	}
@@ -191,7 +197,7 @@ func (n *Node) tryJoin() (string, error) {
 		if err := protocol.DecodeJSON(env.Body, &challenge); err != nil {
 			return "", err
 		}
-		proof := protocol.Proof(n.auth.Verifier, challenge.Nonce,
+		proof := protocol.Proof(verifier, challenge.Nonce,
 			n.cfg.User, n.cfg.Name, n.id.PublicBlob())
 		n.sendEnvelope(protocol.TypeJoinProof, protocol.EncodeJSON(protocol.JoinProof{
 			User:    n.cfg.User,
@@ -199,7 +205,7 @@ func (n *Node) tryJoin() (string, error) {
 			Public:  n.id.PublicBlob(),
 			Proof:   proof,
 		}))
-		env, err = n.recvEnvelope(joinTimeout)
+		env, err = waitEnvelope(n.joinReplyCh, joinTimeout)
 		if err != nil {
 			return "", err
 		}
@@ -257,53 +263,31 @@ func (n *Node) adoptVPNIP(ipStr string) error {
 
 func (n *Node) waitForApproval() bool {
 	logx.Info("waiting for approval, retry every %s", joinRetryDelay)
-	deadline := time.Now().Add(joinRetryDelay)
-	for time.Now().Before(deadline) {
-		env, err := n.recvEnvelope(time.Until(deadline))
-		if err != nil {
-			break
-		}
-		if env.Type != protocol.TypeApproveNotify {
-			continue
-		}
-		var notify protocol.ApproveNotify
-		if err := protocol.DecodeJSON(env.Body, &notify); err != nil {
-			continue
-		}
-		if err := n.adoptVPNIP(notify.VPNIP); err != nil {
-			logx.Warn("%v", err)
-			continue
-		}
-		logx.Success("approval received")
-		return true
+	env, err := waitEnvelope(n.approveCh, joinRetryDelay)
+	if err != nil {
+		return false
 	}
-	return false
+	var notify protocol.ApproveNotify
+	if err := protocol.DecodeJSON(env.Body, &notify); err != nil {
+		return false
+	}
+	if err := n.adoptVPNIP(notify.VPNIP); err != nil {
+		logx.Warn("%v", err)
+		return false
+	}
+	logx.Success("approval received")
+	return true
 }
 
 func (n *Node) sendEnvelope(typ protocol.MsgType, body []byte) {
 	n.conn.WriteToUDPAddrPort(protocol.Marshal(protocol.Envelope{Type: typ, Body: body}), n.serverAddr)
 }
 
-func (n *Node) recvEnvelope(timeout time.Duration) (protocol.Envelope, error) {
-	buf := make([]byte, 65536)
-	n.conn.SetReadDeadline(time.Now().Add(timeout))
-	defer n.conn.SetReadDeadline(time.Time{})
-	for {
-		nread, from, err := n.conn.ReadFromUDPAddrPort(buf)
-		if err != nil {
-			return protocol.Envelope{}, err
-		}
-		if normalize(from) != normalize(n.serverAddr) {
-			continue
-		}
-		env, err := protocol.Unmarshal(buf[:nread])
-		if err != nil {
-			continue
-		}
+func waitEnvelope(ch chan protocol.Envelope, timeout time.Duration) (protocol.Envelope, error) {
+	select {
+	case env := <-ch:
 		return env, nil
+	case <-time.After(timeout):
+		return protocol.Envelope{}, fmt.Errorf("timeout waiting for server")
 	}
-}
-
-func normalize(addr netip.AddrPort) netip.AddrPort {
-	return netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port())
 }

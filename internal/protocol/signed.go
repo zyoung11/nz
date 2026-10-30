@@ -108,12 +108,14 @@ func Open(key, blob []byte) ([]byte, error) {
 
 // PeerInfo describes a machine for peer discovery.
 type PeerInfo struct {
-	User    string `json:"user"`
-	Machine string `json:"machine"`
-	VPNIP   string `json:"vpn_ip"`
-	SignPub []byte `json:"sign_pub"`
-	ExchPub []byte `json:"exch_pub"`
-	Trusted bool   `json:"trusted"`
+	User        string `json:"user"`
+	Machine     string `json:"machine"`
+	VPNIP       string `json:"vpn_ip"`
+	SignPub     []byte `json:"sign_pub"`
+	ExchPub     []byte `json:"exch_pub"`
+	Trusted     bool   `json:"trusted"`
+	CanCall     bool   `json:"can_call"`
+	CanCallBack bool   `json:"can_call_back"`
 }
 
 // MachineListRpy carries the machine table visible to the requester.
@@ -139,13 +141,17 @@ func ParsePeerQuery(payload []byte) (netip.Addr, error) {
 }
 
 // PeerAnswer carries the keys of a machine and, when policy allows
-// direct connections, its real address.
+// direct connections, its real address. CanCall reports whether the
+// requester may start new calls to the machine. CanCallBack reports
+// whether the machine may start new calls back.
 type PeerAnswer struct {
-	Found   bool
-	HasAddr bool
-	Addr    netip.AddrPort
-	SignPub []byte
-	ExchPub []byte
+	Found       bool
+	HasAddr     bool
+	CanCall     bool
+	CanCallBack bool
+	Addr        netip.AddrPort
+	SignPub     []byte
+	ExchPub     []byte
 }
 
 // MarshalPeerAnswer encodes a peer answer payload.
@@ -153,13 +159,9 @@ func MarshalPeerAnswer(a PeerAnswer) []byte {
 	if !a.Found {
 		return []byte{0}
 	}
-	out := make([]byte, 0, 2+4+2+PublicBlobSize)
+	out := make([]byte, 0, 4+4+2+PublicBlobSize)
 	out = append(out, 1)
-	hasAddr := byte(0)
-	if a.HasAddr {
-		hasAddr = 1
-	}
-	out = append(out, hasAddr)
+	out = append(out, boolByte(a.HasAddr), boolByte(a.CanCall), boolByte(a.CanCallBack))
 	if a.HasAddr {
 		addr := addr4(a.Addr.Addr())
 		out = append(out, addr[:]...)
@@ -171,6 +173,13 @@ func MarshalPeerAnswer(a PeerAnswer) []byte {
 	return out
 }
 
+func boolByte(b bool) byte {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // ParsePeerAnswer decodes a peer answer payload.
 func ParsePeerAnswer(payload []byte) (PeerAnswer, error) {
 	if len(payload) < 1 {
@@ -179,22 +188,27 @@ func ParsePeerAnswer(payload []byte) (PeerAnswer, error) {
 	if payload[0] == 0 {
 		return PeerAnswer{Found: false}, nil
 	}
-	if len(payload) < 2 {
+	if len(payload) < 4 {
 		return PeerAnswer{}, fmt.Errorf("peer answer too short")
 	}
-	a := PeerAnswer{Found: true, HasAddr: payload[1] == 1}
-	offset := 2
+	a := PeerAnswer{
+		Found:       true,
+		HasAddr:     payload[1] == 1,
+		CanCall:     payload[2] == 1,
+		CanCallBack: payload[3] == 1,
+	}
+	offset := 4
 	if a.HasAddr {
-		if len(payload) < 2+4+2+PublicBlobSize {
+		if len(payload) < 4+4+2+PublicBlobSize {
 			return PeerAnswer{}, fmt.Errorf("peer answer is %d bytes", len(payload))
 		}
-		addr, ok := netip.AddrFromSlice(payload[2:6])
+		addr, ok := netip.AddrFromSlice(payload[4:8])
 		if !ok {
 			return PeerAnswer{}, fmt.Errorf("bad peer answer address")
 		}
-		port := uint16(payload[6])<<8 | uint16(payload[7])
+		port := uint16(payload[8])<<8 | uint16(payload[9])
 		a.Addr = netip.AddrPortFrom(addr, port)
-		offset = 8
+		offset = 10
 	}
 	if len(payload) != offset+PublicBlobSize {
 		return PeerAnswer{}, fmt.Errorf("peer answer is %d bytes", len(payload))

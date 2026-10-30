@@ -186,6 +186,12 @@ func Fingerprint(blob []byte) string {
 	return hex.EncodeToString(sum[:4])
 }
 
+// UserSalt derives the fixed salt for a user, so every machine of the
+// same user derives the same verifier from the same password.
+func UserSalt(user string) []byte {
+	return []byte("n0-salt-v1|" + user)
+}
+
 // NewSalt returns a random salt for verifier derivation.
 func NewSalt() ([]byte, error) {
 	salt := make([]byte, saltLen)

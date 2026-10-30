@@ -89,9 +89,20 @@ func (c *signedClient) sendRelay(t *testing.T, e *testEnv, dst netip.Addr) {
 func (c *signedClient) tryRecv(t *testing.T) bool {
 	t.Helper()
 	buf := make([]byte, 65536)
-	c.conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-	_, _, err := c.conn.ReadFromUDPAddrPort(buf)
-	return err == nil
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		c.conn.SetReadDeadline(deadline)
+		n, _, err := c.conn.ReadFromUDPAddrPort(buf)
+		if err != nil {
+			return false
+		}
+		env, err := protocol.Unmarshal(buf[:n])
+		if err != nil || env.Type == protocol.TypeKeepAlive {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func TestRelayForwardedForAdmin(t *testing.T) {
@@ -168,21 +179,29 @@ func (e *testEnv) queryPeerAs(t *testing.T, c *signedClient, target netip.Addr) 
 	body := protocol.MarshalSigned(msg, c.id.Sign)
 	c.conn.WriteToUDPAddrPort(protocol.Marshal(protocol.Envelope{Type: protocol.TypePeerQuery, Body: body}), e.addr)
 	buf := make([]byte, 65536)
-	c.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	n, _, err := c.conn.ReadFromUDPAddrPort(buf)
-	if err != nil {
-		t.Fatalf("peer query reply: %v", err)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		c.conn.SetReadDeadline(deadline)
+		n, _, err := c.conn.ReadFromUDPAddrPort(buf)
+		if err != nil {
+			t.Fatalf("peer query reply: %v", err)
+		}
+		env, _ := protocol.Unmarshal(buf[:n])
+		if env.Type != protocol.TypePeerQueryRpy {
+			continue
+		}
+		signed, _, err := protocol.ParseSigned(env.Body)
+		if err != nil {
+			t.Fatalf("parse signed: %v", err)
+		}
+		answer, err := protocol.ParsePeerAnswer(signed.Payload)
+		if err != nil {
+			t.Fatalf("parse answer: %v", err)
+		}
+		return answer
 	}
-	env, _ := protocol.Unmarshal(buf[:n])
-	signed, _, err := protocol.ParseSigned(env.Body)
-	if err != nil {
-		t.Fatalf("parse signed: %v", err)
-	}
-	answer, err := protocol.ParsePeerAnswer(signed.Payload)
-	if err != nil {
-		t.Fatalf("parse answer: %v", err)
-	}
-	return answer
+	t.Fatal("peer query reply timeout")
+	return protocol.PeerAnswer{}
 }
 
 var _ = state.MachineActive

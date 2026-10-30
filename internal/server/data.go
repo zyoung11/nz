@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/netip"
+	"time"
 
 	"nz/internal/identity"
 	"nz/internal/logx"
@@ -19,7 +20,7 @@ func (s *Server) handleSigned(env protocol.Envelope, remote netip.AddrPort) {
 		return
 	}
 	s.rememberIPEndpoint(signed.SrcIP, remote)
-	switch signed.Type {
+	switch env.Type {
 	case protocol.TypeRelayData:
 		s.relayData(signed, env.Body, src)
 	case protocol.TypeData:
@@ -30,6 +31,11 @@ func (s *Server) handleSigned(env protocol.Envelope, remote netip.AddrPort) {
 		s.handleMachineList(signed, src)
 	case protocol.TypeKeepAlive:
 		s.st.Touch(src.User, src.Name)
+		s.sendSigned(protocol.SignedMessage{
+			Type:  protocol.TypeKeepAlive,
+			SrcIP: s.serverIP(),
+			DstIP: signed.SrcIP,
+		}, remote)
 	}
 }
 
@@ -52,17 +58,46 @@ func (s *Server) verifyMachine(m protocol.SignedMessage, sig []byte) (state.Mach
 	return machine, true
 }
 
+const flowTTL = 60 * time.Second
+
+// noteFlow records an allowed direction so reply packets pass back.
+func (s *Server) noteFlow(src, dst netip.Addr) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.flows[src.String()+"->"+dst.String()] = time.Now()
+}
+
+// hasRecentFlow reports whether dst sent traffic to src recently,
+// which makes the current packet a reply instead of a new call.
+func (s *Server) hasRecentFlow(src, dst netip.Addr) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := dst.String() + "->" + src.String()
+	at, ok := s.flows[key]
+	if !ok {
+		return false
+	}
+	if time.Since(at) > flowTTL {
+		delete(s.flows, key)
+		return false
+	}
+	return true
+}
+
 func (s *Server) relayData(m protocol.SignedMessage, raw []byte, src state.Machine) {
 	dst, ok := s.st.FindMachineByIP(m.DstIP.String())
 	if !ok {
 		return
 	}
-	if !s.AllowRelay(src, dst) {
+	if s.AllowRelay(src, dst) {
+		s.noteFlow(m.SrcIP, m.DstIP)
+	} else if !s.hasRecentFlow(m.SrcIP, m.DstIP) {
 		logx.Warn("relay %s/%s -> %s/%s denied by policy", src.User, src.Name, dst.User, dst.Name)
 		return
 	}
 	addr := s.ipEndpoint(m.DstIP)
 	if !addr.IsValid() {
+		logx.Warn("relay target %s/%s has no endpoint, dropped", dst.User, dst.Name)
 		return
 	}
 	s.sendRaw(protocol.Envelope{Type: protocol.TypeRelayData, Body: raw}, addr)
@@ -96,7 +131,11 @@ func (s *Server) handlePeerQuery(m protocol.SignedMessage, src state.Machine) {
 	}
 	answer := protocol.PeerAnswer{Found: false}
 	if dst, ok := s.st.FindMachineByIP(target.String()); ok && dst.Status == state.MachineActive {
-		answer = protocol.PeerAnswer{Found: true}
+		answer = protocol.PeerAnswer{
+			Found:       true,
+			CanCall:     s.AllowRelay(src, dst),
+			CanCallBack: s.AllowRelay(dst, src),
+		}
 		answer.SignPub, answer.ExchPub = machineKeys(dst)
 		if s.AllowAddressExchange(src, dst) {
 			if addr := s.ipEndpoint(target); addr.IsValid() {
@@ -122,12 +161,14 @@ func (s *Server) handleMachineList(m protocol.SignedMessage, src state.Machine) 
 		}
 		signPub, exchPub := machineKeys(other)
 		list.Peers = append(list.Peers, protocol.PeerInfo{
-			User:    other.User,
-			Machine: other.Name,
-			VPNIP:   other.VPNIP,
-			SignPub: signPub,
-			ExchPub: exchPub,
-			Trusted: other.Trusted,
+			User:        other.User,
+			Machine:     other.Name,
+			VPNIP:       other.VPNIP,
+			SignPub:     signPub,
+			ExchPub:     exchPub,
+			Trusted:     other.Trusted,
+			CanCall:     s.AllowRelay(src, other),
+			CanCallBack: s.AllowRelay(other, src),
 		})
 	}
 	signed := protocol.SignedMessage{
