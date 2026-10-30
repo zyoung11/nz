@@ -247,7 +247,7 @@ func (d *Daemon) handleList() ipc.Response {
 			User:    m.User,
 			Machine: m.Name,
 			VPNIP:   m.VPNIP,
-			Trusted: m.Trusted,
+			Trusted: m.Trusted || m.User == d.cfg.Admin.Name,
 			Status:  status,
 		})
 	}

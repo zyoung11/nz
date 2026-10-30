@@ -177,7 +177,7 @@ func (s *Server) handleMachineList(m protocol.SignedMessage, src state.Machine) 
 			VPNIP:       other.VPNIP,
 			SignPub:     signPub,
 			ExchPub:     exchPub,
-			Trusted:     other.Trusted,
+			Trusted:     other.Trusted || other.User == s.cfg.Admin.Name,
 			Status:      status,
 			CanCall:     s.AllowRelay(src, other),
 			CanCallBack: s.AllowRelay(other, src),
