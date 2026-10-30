@@ -67,11 +67,12 @@ func Unmarshal(data []byte) (Envelope, error) {
 }
 
 type JoinRequest struct {
-	User     string `json:"user"`
-	Machine  string `json:"machine"`
-	Public   []byte `json:"public"`
-	Salt     []byte `json:"salt,omitempty"`
-	Verifier []byte `json:"verifier,omitempty"`
+	User      string `json:"user"`
+	Machine   string `json:"machine"`
+	Public    []byte `json:"public"`
+	Salt      []byte `json:"salt,omitempty"`
+	Verifier  []byte `json:"verifier,omitempty"`
+	DesiredIP int    `json:"desired_ip,omitempty"`
 }
 
 type JoinChallenge struct {
@@ -79,10 +80,11 @@ type JoinChallenge struct {
 }
 
 type JoinProof struct {
-	User    string `json:"user"`
-	Machine string `json:"machine"`
-	Public  []byte `json:"public"`
-	Proof   []byte `json:"proof"`
+	User      string `json:"user"`
+	Machine   string `json:"machine"`
+	Public    []byte `json:"public"`
+	Proof     []byte `json:"proof"`
+	DesiredIP int    `json:"desired_ip,omitempty"`
 }
 
 type JoinReply struct {

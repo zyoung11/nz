@@ -113,7 +113,7 @@ func (s *Server) handleJoinRequest(body []byte, remote netip.AddrPort) {
 
 	if _, found := s.st.GetUser(req.User); !found {
 		status, err := s.st.RegisterJoin(req.User, req.Machine,
-			keyString(req.Public), identity.Fingerprint(req.Public), req.Salt, req.Verifier)
+			keyString(req.Public), identity.Fingerprint(req.Public), req.Salt, req.Verifier, req.DesiredIP)
 		if err != nil {
 			s.sendJoinReply(remote, protocol.JoinReply{
 				Result: protocol.ResultRejected, Error: err.Error(),
@@ -168,7 +168,7 @@ func (s *Server) handleJoinProof(body []byte, remote netip.AddrPort) {
 	}
 	s.rememberEndpoint(msg.User, msg.Machine, remote)
 	status, err := s.st.RegisterJoin(msg.User, msg.Machine,
-		keyString(msg.Public), identity.Fingerprint(msg.Public), nil, nil)
+		keyString(msg.Public), identity.Fingerprint(msg.Public), nil, nil, msg.DesiredIP)
 	if err != nil {
 		s.sendJoinReply(remote, protocol.JoinReply{
 			Result: protocol.ResultRejected, Error: err.Error(),
@@ -268,7 +268,7 @@ func (s *Server) approveMachine(user, machine string) error {
 		return nil
 	}
 	if m.VPNIP == "" {
-		ip, err := s.st.AllocateIP(s.cfg.Subnet)
+		ip, err := s.st.AllocateIP(s.cfg.Subnet, m.DesiredIP)
 		if err != nil {
 			return err
 		}
@@ -299,6 +299,13 @@ func (s *Server) UsersData() (string, error) {
 	return string(data), nil
 }
 
+func (s *Server) desiredOf(user, machine string) int {
+	if m, ok := s.st.GetMachine(user, machine); ok {
+		return m.DesiredIP
+	}
+	return 0
+}
+
 // autoApproveAdmin activates admin machines without approval and
 // allocates their addresses immediately.
 func (s *Server) autoApproveAdmin(user, machine string) bool {
@@ -308,7 +315,7 @@ func (s *Server) autoApproveAdmin(user, machine string) bool {
 	if err := s.st.Allow(user, machine); err != nil {
 		return false
 	}
-	ip, err := s.st.AllocateIP(s.cfg.Subnet)
+	ip, err := s.st.AllocateIP(s.cfg.Subnet, s.desiredOf(user, machine))
 	if err != nil {
 		return false
 	}

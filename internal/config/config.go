@@ -24,14 +24,15 @@ type Account struct {
 }
 
 type Config struct {
-	Mode     string  `json:"mode"`
-	Port     int     `json:"port"`
-	Subnet   string  `json:"subnet"`
-	Admin    Account `json:"admin"`
-	User     string  `json:"user"`
-	Password string  `json:"password"`
-	Name     string  `json:"name"`
-	Domain   string  `json:"domain"`
+	Mode      string  `json:"mode"`
+	DesiredIP int     `json:"ip"`
+	Port      int     `json:"port"`
+	Subnet    string  `json:"subnet"`
+	Admin     Account `json:"admin"`
+	User      string  `json:"user"`
+	Password  string  `json:"password"`
+	Name      string  `json:"name"`
+	Domain    string  `json:"domain"`
 }
 
 // DefaultPath returns the config path next to the running binary.

@@ -38,6 +38,7 @@ type User struct {
 type Machine struct {
 	User        string        `json:"user"`
 	Name        string        `json:"name"`
+	DesiredIP   int           `json:"desired_ip,omitempty"`
 	Public      string        `json:"public"`
 	Fingerprint string        `json:"fingerprint"`
 	VPNIP       string        `json:"vpn_ip"`
@@ -384,7 +385,7 @@ func (s *State) Touch(user, machine string) {
 // RegisterJoin records a join attempt and returns the resulting status.
 // It returns "pending" for new users and new machines, the current status
 // for known machines and "rejected" for blocked or duplicated entries.
-func (s *State) RegisterJoin(user, machine, public, fingerprint string, salt, verifier []byte) (string, error) {
+func (s *State) RegisterJoin(user, machine, public, fingerprint string, salt, verifier []byte, desired int) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u := s.findUserLocked(user)
@@ -399,7 +400,7 @@ func (s *State) RegisterJoin(user, machine, public, fingerprint string, salt, ve
 		})
 		s.Machines = append(s.Machines, Machine{
 			User: user, Name: machine, Public: public, Fingerprint: fingerprint,
-			Status: MachinePending, JoinedAt: time.Now(),
+			DesiredIP: desired, Status: MachinePending, JoinedAt: time.Now(),
 		})
 		return string(MachinePending), s.saveLocked()
 	}
@@ -420,6 +421,9 @@ func (s *State) RegisterJoin(user, machine, public, fingerprint string, salt, ve
 			}
 			m.Name = machine
 		}
+		if desired != 0 && m.VPNIP == "" {
+			m.DesiredIP = desired
+		}
 		m.LastSeen = time.Now()
 		return string(m.Status), s.saveLocked()
 	}
@@ -428,7 +432,7 @@ func (s *State) RegisterJoin(user, machine, public, fingerprint string, salt, ve
 	}
 	s.Machines = append(s.Machines, Machine{
 		User: user, Name: machine, Public: public, Fingerprint: fingerprint,
-		Status: MachinePending, JoinedAt: time.Now(),
+		DesiredIP: desired, Status: MachinePending, JoinedAt: time.Now(),
 	})
 	return string(MachinePending), s.saveLocked()
 }
@@ -467,23 +471,39 @@ func (s *State) SetMachineIP(user, machine, ip string) error {
 	return s.saveLocked()
 }
 
-// AllocateIP returns the lowest free host address in subnet from .2 up.
-func (s *State) AllocateIP(subnet string) (string, error) {
+// AllocateIP returns the desired host address when free, otherwise the
+// lowest free address in subnet from .2 up. Desired is a host number
+// from 2 to 254, or 0 for automatic allocation.
+func (s *State) AllocateIP(subnet string, desired int) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	prefix, err := netip.ParsePrefix(subnet)
 	if err != nil {
 		return "", fmt.Errorf("bad subnet %q: %w", subnet, err)
 	}
-	used := make(map[string]bool, len(s.Machines))
+	used := make(map[string]string, len(s.Machines))
 	for _, m := range s.Machines {
 		if m.VPNIP != "" {
-			used[m.VPNIP] = true
+			used[m.VPNIP] = m.User + "/" + m.Name
 		}
 	}
 	serverIP := prefix.Addr().Next()
+	if desired != 0 {
+		if desired < 2 || desired > 254 {
+			return "", fmt.Errorf("desired ip %d out of range 2 to 254", desired)
+		}
+		base := prefix.Addr().As4()
+		addr := netip.AddrFrom4([4]byte{base[0], base[1], base[2], byte(desired)})
+		if !prefix.Contains(addr) || addr == serverIP {
+			return "", fmt.Errorf("desired ip %v is not usable in %s", addr, subnet)
+		}
+		if owner, taken := used[addr.String()]; taken {
+			return "", fmt.Errorf("ip %s already used by %s", addr, owner)
+		}
+		return addr.String(), nil
+	}
 	for addr := serverIP.Next(); prefix.Contains(addr); addr = addr.Next() {
-		if addr == serverIP || used[addr.String()] {
+		if addr == serverIP || used[addr.String()] != "" {
 			continue
 		}
 		return addr.String(), nil

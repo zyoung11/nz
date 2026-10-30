@@ -56,8 +56,11 @@ GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o n0.exe ./cmd/n0
 | `password` | node | 是 | 用户密码 |
 | `name` | node | 是 | 机器名，同一用户内唯一 |
 | `domain` | node | 是 | 服务器地址，域名或 IP |
+| `ip` | node | 否 | 指定 VPN IP 尾号，2 至 254，不填则自动分配 |
 
 服务器读取 `admin` 作为管理员账号。管理员的机器注册后自动批准。节点保存 `Argon2id(password, salt)` 验证值，两端都不保存密码原文。
+
+`ip` 只在首次分配生效，重连永远复用原地址。指定的地址被其他机器占用时，批准显示错误，不会静默换号。
 
 ## 命令参考
 

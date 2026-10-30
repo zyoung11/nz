@@ -160,7 +160,7 @@ func TestApprovePush(t *testing.T) {
 	if err := e.st.Allow("friend", "laptop"); err != nil {
 		t.Fatalf("allow machine: %v", err)
 	}
-	ip, err := e.st.AllocateIP("192.168.200.0/24")
+	ip, err := e.st.AllocateIP("192.168.200.0/24", 0)
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestAllocateIPSkipsUsed(t *testing.T) {
 	e.join(t, "friend", "laptop", []byte("k1"))
 	e.st.Allow("friend", "")
 	e.st.Allow("friend", "laptop")
-	first, err := e.st.AllocateIP("192.168.200.0/24")
+	first, err := e.st.AllocateIP("192.168.200.0/24", 0)
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestAllocateIPSkipsUsed(t *testing.T) {
 	e.st.SetMachineIP("friend", "laptop", first)
 	e.joinExisting(t, "friend", "desktop", []byte("k2"), []byte("verifier"))
 	e.st.Allow("friend", "desktop")
-	second, err := e.st.AllocateIP("192.168.200.0/24")
+	second, err := e.st.AllocateIP("192.168.200.0/24", 0)
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}

@@ -36,7 +36,7 @@ func (e *testEnv) newSignedClient(t *testing.T, user, machine string) *signedCli
 	if err := e.st.Allow(user, machine); err != nil {
 		t.Fatalf("allow machine: %v", err)
 	}
-	ip, err := e.st.AllocateIP("192.168.200.0/24")
+	ip, err := e.st.AllocateIP("192.168.200.0/24", 0)
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}

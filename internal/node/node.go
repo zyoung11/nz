@@ -184,11 +184,12 @@ func (n *Node) join() error {
 func (n *Node) tryJoin() (string, error) {
 	verifier := n.verifier()
 	req := protocol.JoinRequest{
-		User:     n.cfg.User,
-		Machine:  n.cfg.Name,
-		Public:   n.id.PublicBlob(),
-		Salt:     identity.UserSalt(n.cfg.User),
-		Verifier: verifier,
+		User:      n.cfg.User,
+		Machine:   n.cfg.Name,
+		Public:    n.id.PublicBlob(),
+		Salt:      identity.UserSalt(n.cfg.User),
+		Verifier:  verifier,
+		DesiredIP: n.cfg.DesiredIP,
 	}
 	n.sendEnvelope(protocol.TypeJoinRequest, protocol.EncodeJSON(req))
 	env, err := waitEnvelope(n.joinReplyCh, joinTimeout)
@@ -203,10 +204,11 @@ func (n *Node) tryJoin() (string, error) {
 		proof := protocol.Proof(verifier, challenge.Nonce,
 			n.cfg.User, n.cfg.Name, n.id.PublicBlob())
 		n.sendEnvelope(protocol.TypeJoinProof, protocol.EncodeJSON(protocol.JoinProof{
-			User:    n.cfg.User,
-			Machine: n.cfg.Name,
-			Public:  n.id.PublicBlob(),
-			Proof:   proof,
+			User:      n.cfg.User,
+			Machine:   n.cfg.Name,
+			Public:    n.id.PublicBlob(),
+			Proof:     proof,
+			DesiredIP: n.cfg.DesiredIP,
 		}))
 		env, err = waitEnvelope(n.joinReplyCh, joinTimeout)
 		if err != nil {
