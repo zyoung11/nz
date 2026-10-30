@@ -160,6 +160,10 @@ func (s *Server) handleMachineList(m protocol.SignedMessage, src state.Machine) 
 			continue
 		}
 		signPub, exchPub := machineKeys(other)
+		status := "offline"
+		if time.Since(other.LastSeen) < 15*time.Second {
+			status = "online"
+		}
 		list.Peers = append(list.Peers, protocol.PeerInfo{
 			User:        other.User,
 			Machine:     other.Name,
@@ -167,6 +171,7 @@ func (s *Server) handleMachineList(m protocol.SignedMessage, src state.Machine) 
 			SignPub:     signPub,
 			ExchPub:     exchPub,
 			Trusted:     other.Trusted,
+			Status:      status,
 			CanCall:     s.AllowRelay(src, other),
 			CanCallBack: s.AllowRelay(other, src),
 		})

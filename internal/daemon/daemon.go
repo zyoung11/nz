@@ -16,6 +16,7 @@ import (
 	"nz/internal/ipc"
 	"nz/internal/logx"
 	"nz/internal/node"
+	"nz/internal/protocol"
 	"nz/internal/server"
 	"nz/internal/state"
 	"nz/internal/tun"
@@ -23,6 +24,8 @@ import (
 
 type statusData struct {
 	Version  string `json:"version"`
+	Conn     string `json:"conn,omitempty"`
+	VPNIP    string `json:"vpn_ip,omitempty"`
 	Mode     string `json:"mode"`
 	Port     int    `json:"port"`
 	Subnet   string `json:"subnet"`
@@ -113,6 +116,7 @@ func (d *Daemon) Serve(pingback, token string) error {
 		go func() {
 			if err := node.Run(d.cfg, d.keyPath); err != nil {
 				logx.Error("node stopped: %v", err)
+				d.Stop()
 			}
 		}()
 	}
@@ -195,6 +199,8 @@ func (d *Daemon) handleStatus() ipc.Response {
 	}
 	data := statusData{
 		Version:  d.Version,
+		Conn:     connStateOf(d),
+		VPNIP:    connIPOf(d),
 		Mode:     d.cfg.Mode,
 		Port:     d.cfg.Port,
 		Subnet:   d.cfg.Subnet,
@@ -207,17 +213,29 @@ func (d *Daemon) handleStatus() ipc.Response {
 }
 
 func (d *Daemon) handleList() ipc.Response {
-	_, machines := d.st.Snapshot()
 	if d.cfg.Mode == "node" {
-		filtered := machines[:0:0]
-		for _, m := range machines {
-			if m.User == d.cfg.User || m.Trusted {
-				filtered = append(filtered, m)
-			}
+		peers, err := node.QueryMachines()
+		if err != nil {
+			return ipc.Response{OK: false, Error: err.Error()}
 		}
-		machines = filtered
+		return jsonData(peers)
 	}
-	return jsonData(machines)
+	_, machines := d.st.Snapshot()
+	peers := make([]protocol.PeerInfo, 0, len(machines))
+	for _, m := range machines {
+		status := "offline"
+		if time.Since(m.LastSeen) < 15*time.Second {
+			status = "online"
+		}
+		peers = append(peers, protocol.PeerInfo{
+			User:    m.User,
+			Machine: m.Name,
+			VPNIP:   m.VPNIP,
+			Trusted: m.Trusted,
+			Status:  status,
+		})
+	}
+	return jsonData(peers)
 }
 
 func (d *Daemon) handleUsers() ipc.Response {
@@ -282,6 +300,22 @@ func (d *Daemon) approveMachine(user, machine string) error {
 		d.srv.NotifyApprove(user, machine)
 	}
 	return nil
+}
+
+func connStateOf(d *Daemon) string {
+	if d.cfg.Mode != "node" {
+		return ""
+	}
+	state, _ := node.ConnectionState()
+	return state
+}
+
+func connIPOf(d *Daemon) string {
+	if d.cfg.Mode != "node" {
+		return ""
+	}
+	_, ip := node.ConnectionState()
+	return ip
 }
 
 func jsonData(v any) ipc.Response {

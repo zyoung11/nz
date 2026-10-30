@@ -155,3 +155,11 @@ func Cleanup(name string) {
 	}
 	netlink.LinkDel(link)
 }
+
+// CheckPermission reports whether this process may create TUN devices.
+func CheckPermission() error {
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("tun devices need root, run with sudo")
+	}
+	return nil
+}

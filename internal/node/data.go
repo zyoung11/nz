@@ -42,6 +42,8 @@ func (n *Node) readFromUDP() {
 			n.handleData(env)
 		case protocol.TypePeerQueryRpy:
 			deliver(n.queryReplyCh, env)
+		case protocol.TypeMachineListRpy:
+			deliver(n.listReplyCh, env)
 		case protocol.TypeJoinChallenge, protocol.TypeJoinReply:
 			deliver(n.joinReplyCh, env)
 		case protocol.TypeApproveNotify:
@@ -157,14 +159,49 @@ func (n *Node) ensureServerPeer() *peer {
 		return nil
 	}
 	p := &peer{
-		signPub:  n.auth.ServerSignPub,
-		exchPub:  n.auth.ServerExchPub,
-		key:      key,
-		realAddr: n.serverAddr,
-		lastSeen: time.Now(),
+		signPub:     n.auth.ServerSignPub,
+		exchPub:     n.auth.ServerExchPub,
+		key:         key,
+		realAddr:    n.serverAddr,
+		canCall:     true,
+		canCallBack: true,
+		lastSeen:    time.Now(),
 	}
 	n.peers[serverAddrOf(n)] = p
 	return p
+}
+
+// QueryMachines asks the server for the visible machine table.
+func QueryMachines() ([]protocol.PeerInfo, error) {
+	n := activeNode.Load()
+	if n == nil {
+		return nil, fmt.Errorf("node is not running")
+	}
+	msg := protocol.SignedMessage{
+		Type:  protocol.TypeMachineList,
+		SrcIP: n.vpnIP,
+		DstIP: serverAddrOf(n),
+	}
+	body := protocol.MarshalSigned(msg, n.id.Sign)
+	n.conn.WriteToUDPAddrPort(
+		protocol.Marshal(protocol.Envelope{Type: protocol.TypeMachineList, Body: body}),
+		n.serverAddr)
+	env, err := waitEnvelope(n.listReplyCh, peerQueryTimeout)
+	if err != nil {
+		return nil, err
+	}
+	signed, sig, err := protocol.ParseSigned(env.Body)
+	if err != nil {
+		return nil, err
+	}
+	if !n.verifyServer(signed, sig) {
+		return nil, fmt.Errorf("bad server signature")
+	}
+	var list protocol.MachineListRpy
+	if err := protocol.DecodeJSON(signed.Payload, &list); err != nil {
+		return nil, err
+	}
+	return list.Peers, nil
 }
 
 func (n *Node) queryPeer(dst netip.Addr) (protocol.PeerAnswer, error) {

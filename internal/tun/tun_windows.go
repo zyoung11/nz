@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os/exec"
 
+	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/tun"
 
 	"nz/internal/logx"
@@ -79,3 +80,17 @@ func Create(name string, ip netip.Addr, subnet netip.Prefix) (Device, error) {
 
 // Cleanup has nothing to do on Windows, wintun removal is automatic.
 func Cleanup(_ string) {}
+
+// CheckPermission reports whether this process may create TUN devices.
+func CheckPermission() error {
+	var token windows.Token
+	err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY, &token)
+	if err != nil {
+		return err
+	}
+	defer token.Close()
+	if !token.IsElevated() {
+		return fmt.Errorf("tun devices need administrator rights, run as administrator")
+	}
+	return nil
+}

@@ -114,6 +114,7 @@ type PeerInfo struct {
 	SignPub     []byte `json:"sign_pub"`
 	ExchPub     []byte `json:"exch_pub"`
 	Trusted     bool   `json:"trusted"`
+	Status      string `json:"status"`
 	CanCall     bool   `json:"can_call"`
 	CanCallBack bool   `json:"can_call_back"`
 }

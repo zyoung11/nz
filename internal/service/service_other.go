@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const unitName = "n0.service"
@@ -37,6 +38,12 @@ func install(cfgPath string) error {
 		if out, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput(); err != nil {
 			return fmt.Errorf("%s failed: %v (%s)", strings.Join(cmd, " "), err, strings.TrimSpace(string(out)))
 		}
+	}
+	time.Sleep(time.Second)
+	out, _ := exec.Command("systemctl", "is-active", "n0").Output()
+	status := strings.TrimSpace(string(out))
+	if status != "active" {
+		return fmt.Errorf("service is %q after start, check journalctl -u n0", status)
 	}
 	return nil
 }

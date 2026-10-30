@@ -3,12 +3,14 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"nz/internal/config"
@@ -18,6 +20,8 @@ import (
 	"nz/internal/tun"
 )
 
+var errFatal = errors.New("fatal")
+
 const (
 	joinRetryDelay    = 5 * time.Second
 	joinTimeout       = 5 * time.Second
@@ -25,6 +29,24 @@ const (
 	keepAliveInterval = 5 * time.Second
 	serverStaleAfter  = 15 * time.Second
 )
+
+var (
+	connState  atomic.Value
+	connVPNIP  atomic.Value
+	activeNode atomic.Pointer[Node]
+)
+
+// ConnectionState reports the join state and VPN address of the node.
+func ConnectionState() (string, string) {
+	state, _ := connState.Load().(string)
+	ip, _ := connVPNIP.Load().(string)
+	return state, ip
+}
+
+func setConnState(state, ip string) {
+	connState.Store(state)
+	connVPNIP.Store(ip)
+}
 
 type authData struct {
 	ServerSignPub []byte `json:"server_sign_pub,omitempty"`
@@ -57,6 +79,7 @@ type Node struct {
 	queryReplyCh   chan protocol.Envelope
 	joinReplyCh    chan protocol.Envelope
 	approveCh      chan protocol.Envelope
+	listReplyCh    chan protocol.Envelope
 	lastServerSeen time.Time
 }
 
@@ -73,6 +96,7 @@ func Run(cfg *config.Config, keyPath string) error {
 	if err != nil {
 		return err
 	}
+	setConnState("connecting", "")
 	n := &Node{
 		cfg:          cfg,
 		id:           id,
@@ -82,7 +106,9 @@ func Run(cfg *config.Config, keyPath string) error {
 		queryReplyCh: make(chan protocol.Envelope, 1),
 		joinReplyCh:  make(chan protocol.Envelope, 1),
 		approveCh:    make(chan protocol.Envelope, 1),
+		listReplyCh:  make(chan protocol.Envelope, 1),
 	}
+	activeNode.Store(n)
 	if err := n.connect(); err != nil {
 		return err
 	}
@@ -135,6 +161,7 @@ func (n *Node) connect() error {
 		return err
 	}
 	n.serverAddr = serverAddr
+	logx.Info("server %s resolved to %v", n.cfg.Domain, serverAddr)
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
 		return fmt.Errorf("failed to listen UDP: %w", err)
@@ -161,7 +188,10 @@ func (n *Node) join() error {
 	for {
 		result, err := n.tryJoin()
 		if err != nil {
-			logx.Warn("join failed: %v", err)
+			if errors.Is(err, errFatal) {
+				return err
+			}
+			logx.Warn("join failed via %v: %v", n.serverAddr, err)
 			time.Sleep(joinRetryDelay)
 			continue
 		}
@@ -169,7 +199,11 @@ func (n *Node) join() error {
 		case protocol.ResultActive:
 			return nil
 		case protocol.ResultPending:
-			if n.waitForApproval() {
+			ok, err := n.waitForApproval()
+			if err != nil {
+				return err
+			}
+			if ok {
 				return nil
 			}
 		default:
@@ -245,38 +279,38 @@ func (n *Node) acceptServerKeys(serverPub []byte) {
 func (n *Node) adoptVPNIP(ipStr string) error {
 	ip, err := netip.ParseAddr(ipStr)
 	if err != nil {
-		return fmt.Errorf("bad vpn ip %q: %w", ipStr, err)
+		return fmt.Errorf("%w: bad vpn ip %q", errFatal, ipStr)
 	}
 	n.vpnIP = ip
 	n.subnet = netip.PrefixFrom(netip.AddrFrom4([4]byte{ip.As4()[0], ip.As4()[1], ip.As4()[2], 0}), 24)
 	if n.tun != nil {
 		return nil
 	}
-	dev, err := tun.Create(n.cfg.Name, ip, n.subnet)
+	dev, err := tun.Create(config.TunName, ip, n.subnet)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errFatal, err)
 	}
 	n.tun = dev
+	setConnState("joined", ip.String())
 	logx.Success("machine %s joined as %s", n.cfg.Name, ip)
 	return nil
 }
 
-func (n *Node) waitForApproval() bool {
+func (n *Node) waitForApproval() (bool, error) {
 	logx.Info("waiting for approval, retry every %s", joinRetryDelay)
 	env, err := waitEnvelope(n.approveCh, joinRetryDelay)
 	if err != nil {
-		return false
+		return false, nil
 	}
 	var notify protocol.ApproveNotify
 	if err := protocol.DecodeJSON(env.Body, &notify); err != nil {
-		return false
+		return false, nil
 	}
 	if err := n.adoptVPNIP(notify.VPNIP); err != nil {
-		logx.Warn("%v", err)
-		return false
+		return false, err
 	}
 	logx.Success("approval received")
-	return true
+	return true, nil
 }
 
 func (n *Node) sendEnvelope(typ protocol.MsgType, body []byte) {

@@ -1,8 +1,14 @@
 package service
 
+import "path/filepath"
+
 // Install registers the daemon for auto-start on boot.
 func Install(cfgPath string) error {
-	return install(cfgPath)
+	abs, err := filepath.Abs(cfgPath)
+	if err != nil {
+		return err
+	}
+	return install(abs)
 }
 
 // Uninstall removes the auto-start registration.
