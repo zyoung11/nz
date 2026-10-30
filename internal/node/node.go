@@ -22,6 +22,7 @@ import (
 var errFatal = errors.New("fatal")
 
 const (
+	p2pFreshAfter     = 10 * time.Second
 	joinRetryDelay    = 5 * time.Second
 	joinTimeout       = 5 * time.Second
 	peerQueryTimeout  = 3 * time.Second
@@ -54,6 +55,7 @@ type peer struct {
 	realAddr    netip.AddrPort
 	canCall     bool
 	canCallBack bool
+	directOK    bool
 	lastSeen    time.Time
 }
 
@@ -288,6 +290,10 @@ func (n *Node) waitForApproval() (bool, error) {
 
 func (n *Node) sendEnvelope(typ protocol.MsgType, body []byte) {
 	n.conn.WriteToUDPAddrPort(protocol.Marshal(protocol.Envelope{Type: typ, Body: body}), n.serverAddr)
+}
+
+func normalize(addr netip.AddrPort) netip.AddrPort {
+	return netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port())
 }
 
 func waitEnvelope(ch chan protocol.Envelope, timeout time.Duration) (protocol.Envelope, error) {

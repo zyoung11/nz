@@ -28,7 +28,7 @@ func deliver(ch chan protocol.Envelope, env protocol.Envelope) {
 func (n *Node) readFromUDP() {
 	buf := make([]byte, 65536)
 	for {
-		nread, _, err := n.conn.ReadFromUDPAddrPort(buf)
+		nread, from, err := n.conn.ReadFromUDPAddrPort(buf)
 		if err != nil {
 			return
 		}
@@ -39,7 +39,7 @@ func (n *Node) readFromUDP() {
 		n.lastServerSeen = time.Now()
 		switch env.Type {
 		case protocol.TypeData, protocol.TypeRelayData:
-			n.handleData(env)
+			n.handleData(env, normalize(from))
 		case protocol.TypePeerQueryRpy:
 			deliver(n.queryReplyCh, env)
 		case protocol.TypeMachineListRpy:
@@ -50,6 +50,8 @@ func (n *Node) readFromUDP() {
 			deliver(n.joinReplyCh, env)
 		case protocol.TypeApproveNotify:
 			deliver(n.approveCh, env)
+		case protocol.TypePolicyChanged:
+			n.dropAllPeers()
 		case protocol.TypeKeepAlive:
 			signed, sig, err := protocol.ParseSigned(env.Body)
 			if err == nil && !n.verifyServer(signed, sig) {
@@ -98,14 +100,17 @@ func (n *Node) sendTo(dst netip.Addr, raw []byte) {
 	}
 	msg := protocol.SignedMessage{Type: protocol.TypeData, SrcIP: n.vpnIP, DstIP: dst, Payload: cipher}
 	body := protocol.MarshalSigned(msg, n.id.Sign)
-	env := protocol.Envelope{Type: protocol.TypeData, Body: body}
-	addr := n.serverAddr
-	if p.realAddr.IsValid() {
-		addr = p.realAddr
-	} else {
-		env.Type = protocol.TypeRelayData
+	env := protocol.Marshal(protocol.Envelope{Type: protocol.TypeData, Body: body})
+	if p.directOK && time.Since(p.lastSeen) < p2pFreshAfter {
+		n.conn.WriteToUDPAddrPort(env, p.realAddr)
+		return
 	}
-	n.conn.WriteToUDPAddrPort(protocol.Marshal(env), addr)
+	if p.realAddr.IsValid() {
+		n.conn.WriteToUDPAddrPort(env, p.realAddr)
+	}
+	n.conn.WriteToUDPAddrPort(
+		protocol.Marshal(protocol.Envelope{Type: protocol.TypeRelayData, Body: body}),
+		n.serverAddr)
 }
 
 const peerRefreshAfter = time.Second
@@ -142,6 +147,7 @@ func (n *Node) ensurePeer(dst netip.Addr) *peer {
 	p.key = key
 	p.canCall = answer.CanCall
 	p.canCallBack = answer.CanCallBack
+	p.directOK = false
 	p.lastSeen = time.Now()
 	p.realAddr = netip.AddrPort{}
 	if answer.HasAddr {
@@ -289,7 +295,7 @@ func (n *Node) serverAuthFailed() {
 	n.lastServerSeen = time.Time{}
 }
 
-func (n *Node) handleData(env protocol.Envelope) {
+func (n *Node) handleData(env protocol.Envelope, from netip.AddrPort) {
 	signed, sig, err := protocol.ParseSigned(env.Body)
 	if err != nil {
 		return
@@ -299,6 +305,10 @@ func (n *Node) handleData(env protocol.Envelope) {
 		go n.ensurePeer(signed.SrcIP)
 		logx.Warn("data from unknown peer %v dropped, discovering", signed.SrcIP)
 		return
+	}
+	if p.realAddr.IsValid() && from == normalize(p.realAddr) {
+		p.directOK = true
+		p.lastSeen = time.Now()
 	}
 	if !protocol.VerifySigned(signed, sig, p.signPub) {
 		logx.Warn("bad signature from %v dropped", signed.SrcIP)
@@ -326,6 +336,16 @@ func (n *Node) lookupPeer(ip netip.Addr) *peer {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.peers[ip]
+}
+
+func (n *Node) dropAllPeers() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for ip := range n.peers {
+		if ip != serverAddrOf(n) {
+			delete(n.peers, ip)
+		}
+	}
 }
 
 func (n *Node) dropPeer(ip netip.Addr) {

@@ -225,17 +225,40 @@ func (s *Server) AdminCommand(command, target string) error {
 		}
 		return nil
 	case "deny":
-		return s.st.Deny(user, machine)
+		err = s.st.Deny(user, machine)
 	case "block":
-		return s.st.Block(user, machine)
+		err = s.st.Block(user, machine)
 	case "unblock":
-		return s.st.Unblock(user, machine)
+		err = s.st.Unblock(user, machine)
 	case "trust":
-		return s.st.Trust(user, machine)
+		err = s.st.Trust(user, machine)
 	case "untrust":
-		return s.st.Untrust(user, machine)
+		err = s.st.Untrust(user, machine)
 	default:
 		return fmt.Errorf("unknown command %s", command)
+	}
+	if err == nil {
+		s.broadcastPolicyChanged()
+	}
+	return err
+}
+
+// broadcastPolicyChanged tells every machine to refresh its cached
+// policy so allow and block take effect within one round trip.
+func (s *Server) broadcastPolicyChanged() {
+	s.mu.Lock()
+	targets := make([]netip.AddrPort, 0, len(s.ipEndpoints))
+	for _, addr := range s.ipEndpoints {
+		targets = append(targets, addr)
+	}
+	s.mu.Unlock()
+	msg := protocol.SignedMessage{
+		Type:  protocol.TypePolicyChanged,
+		SrcIP: s.serverIP(),
+	}
+	body := protocol.MarshalSigned(msg, s.id.Sign)
+	for _, addr := range targets {
+		s.sendRaw(protocol.Envelope{Type: protocol.TypePolicyChanged, Body: body}, addr)
 	}
 }
 

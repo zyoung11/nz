@@ -28,6 +28,7 @@ const (
 	TypeMachineListRpy MsgType = 0x31
 	TypeAdminRequest   MsgType = 0x32
 	TypeAdminRpy       MsgType = 0x33
+	TypePolicyChanged  MsgType = 0x34
 	TypeDisconnect     MsgType = 0x3f
 )
 
