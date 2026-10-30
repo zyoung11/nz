@@ -3,11 +3,19 @@ source "$(dirname "$0")/lib.sh"
 
 info "legacy nz and n0 run side by side"
 
-info "building legacy nz"
-(cd "$REPO" && CGO_ENABLED=0 go build -o "$BIN_V1" .) || {
-	err "legacy build failed"
+info "building legacy nz from main branch"
+WORKTREE="$TESTDIR/.v1-src"
+git -C "$REPO" worktree remove --force "$WORKTREE" >/dev/null 2>&1
+git -C "$REPO" worktree add "$WORKTREE" main >/dev/null 2>&1 || {
+	err "cannot create worktree from main"
 	finish
 }
+(cd "$WORKTREE" && CGO_ENABLED=0 go build -o "$BIN_V1" .) || {
+	err "legacy build failed"
+	git -C "$REPO" worktree remove --force "$WORKTREE" >/dev/null 2>&1
+	finish
+}
+git -C "$REPO" worktree remove --force "$WORKTREE" >/dev/null 2>&1
 
 info "starting legacy nz server in node-a container"
 podman cp "$BIN_V1" n0-node-a:/usr/local/bin/nz >/dev/null
