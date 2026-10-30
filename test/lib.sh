@@ -64,6 +64,7 @@ start_node_daemon() {
 	local container="$1"
 	podman exec "n0-$container" pkill -f "n0 run" >/dev/null 2>&1
 	sleep 1
+	podman exec "n0-$container" sh -c 'rm -f /usr/local/bin/n0.log'
 	podman exec -d "n0-$container" n0 run --config /cfg/config.json --log
 }
 

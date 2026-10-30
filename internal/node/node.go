@@ -100,8 +100,17 @@ func Run(ctx context.Context, cfg *config.Config, st *state.State, id *identity.
 		adminReplyCh: make(chan protocol.Envelope, 1),
 	}
 	activeNode.Store(n)
-	if err := n.connect(); err != nil {
-		return err
+	for {
+		err := n.connect()
+		if err == nil {
+			break
+		}
+		logx.Warn("server not reachable yet: %v", err)
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(joinRetryDelay):
+		}
 	}
 	go n.readFromUDP()
 	if err := n.join(); err != nil {
