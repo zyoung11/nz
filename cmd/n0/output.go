@@ -31,7 +31,7 @@ func statusColor(s string) string {
 }
 
 func printMachineTable(peers []protocol.PeerInfo) {
-	header := []string{"Name", "User", "IP", "Status", "Trust"}
+	header := []string{"Name", "User", "VPN IP", "Status", "Trust"}
 	rows := make([][]string, 0, len(peers))
 	for _, m := range peers {
 		status := m.Status
@@ -95,7 +95,7 @@ func printUserTable(users []state.User, machines []state.MachineView, pendingOnl
 			fmt.Println("  no machines")
 			continue
 		}
-		header := []string{"State", "Machine", "VPN IP", "Key", "Last Seen", "Trust"}
+		header := []string{"Machine", "VPN IP", "Status", "Key", "Last Seen", "Trust"}
 		rows := make([][]string, 0, len(g.machines))
 		for _, m := range g.machines {
 			status := string(m.Status)
@@ -103,13 +103,13 @@ func printUserTable(users []state.User, machines []state.MachineView, pendingOnl
 				status = "local"
 			}
 			rows = append(rows, []string{
-				status, m.Name, dash(m.VPNIP), dash(m.Fingerprint),
+				m.Name, dash(m.VPNIP), status, dash(m.Fingerprint),
 				formatSeen(m.LastSeen), yesNo(m.Trusted),
 			})
 		}
 		printTable(header, rows, func(rowIdx, colIdx int, _ string) string {
-			if colIdx == 0 {
-				return statusColor(rows[rowIdx][0])
+			if colIdx == 2 {
+				return statusColor(rows[rowIdx][2])
 			}
 			return colorReset
 		})
