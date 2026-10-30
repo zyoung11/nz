@@ -119,6 +119,19 @@ type PeerInfo struct {
 	CanCallBack bool   `json:"can_call_back"`
 }
 
+// AdminRequest is a management operation sent from an admin machine.
+type AdminRequest struct {
+	Command string `json:"command"`
+	Target  string `json:"target,omitempty"`
+}
+
+// AdminReply carries the management result.
+type AdminReply struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+	Data  string `json:"data,omitempty"`
+}
+
 // MachineListRpy carries the machine table visible to the requester.
 type MachineListRpy struct {
 	Peers []PeerInfo `json:"peers"`

@@ -37,6 +37,7 @@ expect_contains() {
 		ok "$desc"
 	else
 		err "$desc: missing [$needle]"
+		err "  actual: $(echo "$haystack" | tr '\n' '|' | head -c 200)"
 		FAILS=$((FAILS + 1))
 	fi
 }

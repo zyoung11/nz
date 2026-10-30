@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/netip"
@@ -91,7 +92,7 @@ func (s *Server) handle(env protocol.Envelope, remote netip.AddrPort) {
 	case protocol.TypeJoinProof:
 		s.handleJoinProof(env.Body, remote)
 	case protocol.TypeData, protocol.TypeRelayData, protocol.TypePeerQuery,
-		protocol.TypeMachineList, protocol.TypeKeepAlive:
+		protocol.TypeMachineList, protocol.TypeKeepAlive, protocol.TypeAdminRequest:
 		s.handleSigned(env, remote)
 	}
 }
@@ -206,6 +207,73 @@ func (s *Server) NotifyApprove(user, machine string) {
 		s.rememberIPEndpoint(ip, addr)
 	}
 	logx.Success("approval pushed to %s/%s", user, machine)
+}
+
+// AdminCommand executes a management operation locally.
+func (s *Server) AdminCommand(command, target string) error {
+	user, machine, err := state.ParseTarget(target)
+	if err != nil {
+		return err
+	}
+	switch command {
+	case "allow":
+		if err := s.st.Allow(user, machine); err != nil {
+			return err
+		}
+		if machine != "" {
+			return s.approveMachine(user, machine)
+		}
+		return nil
+	case "deny":
+		return s.st.Deny(user, machine)
+	case "block":
+		return s.st.Block(user, machine)
+	case "unblock":
+		return s.st.Unblock(user, machine)
+	case "trust":
+		return s.st.Trust(user, machine)
+	case "untrust":
+		return s.st.Untrust(user, machine)
+	default:
+		return fmt.Errorf("unknown command %s", command)
+	}
+}
+
+func (s *Server) approveMachine(user, machine string) error {
+	m, ok := s.st.GetMachine(user, machine)
+	if !ok {
+		return nil
+	}
+	if m.VPNIP == "" {
+		ip, err := s.st.AllocateIP(s.cfg.Subnet)
+		if err != nil {
+			return err
+		}
+		if err := s.st.SetMachineIP(user, machine, ip); err != nil {
+			return err
+		}
+		logx.Info("allocated %s for %s/%s", ip, user, machine)
+	}
+	s.NotifyApprove(user, machine)
+	return nil
+}
+
+// UsersData returns the full user and machine table as JSON.
+func (s *Server) UsersData() (string, error) {
+	users, machines := s.st.Snapshot()
+	for i := range machines {
+		if machines[i].User == s.cfg.Admin.Name {
+			machines[i].Trusted = true
+		}
+	}
+	data, err := json.Marshal(struct {
+		Users    []state.User    `json:"users"`
+		Machines []state.Machine `json:"machines"`
+	}{users, machines})
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 // autoApproveAdmin activates admin machines without approval and

@@ -44,6 +44,8 @@ func (n *Node) readFromUDP() {
 			deliver(n.queryReplyCh, env)
 		case protocol.TypeMachineListRpy:
 			deliver(n.listReplyCh, env)
+		case protocol.TypeAdminRpy:
+			deliver(n.adminReplyCh, env)
 		case protocol.TypeJoinChallenge, protocol.TypeJoinReply:
 			deliver(n.joinReplyCh, env)
 		case protocol.TypeApproveNotify:
@@ -157,14 +159,15 @@ func (n *Node) ensureServerPeer() *peer {
 	if p, ok := n.peers[serverAddrOf(n)]; ok {
 		return p
 	}
-	key, err := n.id.SharedKey(n.auth.ServerExchPub)
+	signPub, exchPub := n.serverKeys()
+	key, err := n.id.SharedKey(exchPub)
 	if err != nil {
 		logx.Warn("server key exchange failed: %v", err)
 		return nil
 	}
 	p := &peer{
-		signPub:     n.auth.ServerSignPub,
-		exchPub:     n.auth.ServerExchPub,
+		signPub:     signPub,
+		exchPub:     exchPub,
 		key:         key,
 		realAddr:    n.serverAddr,
 		canCall:     true,
@@ -173,6 +176,41 @@ func (n *Node) ensureServerPeer() *peer {
 	}
 	n.peers[serverAddrOf(n)] = p
 	return p
+}
+
+// AdminCommand forwards a management operation to the server.
+func AdminCommand(command, target string) (protocol.AdminReply, error) {
+	n := activeNode.Load()
+	if n == nil {
+		return protocol.AdminReply{}, fmt.Errorf("node is not running")
+	}
+	msg := protocol.SignedMessage{
+		Type:    protocol.TypeAdminRequest,
+		SrcIP:   n.vpnIP,
+		DstIP:   serverAddrOf(n),
+		Payload: protocol.EncodeJSON(protocol.AdminRequest{Command: command, Target: target}),
+	}
+	body := protocol.MarshalSigned(msg, n.id.Sign)
+	n.conn.WriteToUDPAddrPort(
+		protocol.Marshal(protocol.Envelope{Type: protocol.TypeAdminRequest, Body: body}),
+		n.serverAddr)
+	env, err := waitEnvelope(n.adminReplyCh, peerQueryTimeout)
+	if err != nil {
+		return protocol.AdminReply{}, err
+	}
+	signed, sig, err := protocol.ParseSigned(env.Body)
+	if err != nil {
+		return protocol.AdminReply{}, err
+	}
+	if !n.verifyServer(signed, sig) {
+		n.serverAuthFailed()
+		return protocol.AdminReply{}, fmt.Errorf("bad server signature")
+	}
+	var reply protocol.AdminReply
+	if err := protocol.DecodeJSON(signed.Payload, &reply); err != nil {
+		return protocol.AdminReply{}, err
+	}
+	return reply, nil
 }
 
 // QueryMachines asks the server for the visible machine table.
@@ -240,7 +278,8 @@ func serverAddrOf(n *Node) netip.Addr {
 }
 
 func (n *Node) verifyServer(m protocol.SignedMessage, sig []byte) bool {
-	return protocol.VerifySigned(m, sig, n.auth.ServerSignPub)
+	signPub, _ := n.serverKeys()
+	return protocol.VerifySigned(m, sig, signPub)
 }
 
 // serverAuthFailed marks the server link stale so the watch loop

@@ -21,7 +21,7 @@ out=$(podman exec --user tester n0-node-b n0 status 2>&1)
 expect_contains "read command works without root" "$out" "running"
 
 out=$(podman exec n0-node-b n0 users 2>&1)
-expect_contains "users refused on node" "$out" "only available on the server"
+expect_contains "users on plain node refused" "$out" "only admin machines"
 
 out=$(podman exec n0-node-b sh -c 'cp /cfg/config.json /cfg/config.bak; echo bad > /cfg/config.json; n0 reload; mv /cfg/config.bak /cfg/config.json' 2>&1)
 expect_contains "reload keeps old config on parse error" "$out" "keep running with old config"

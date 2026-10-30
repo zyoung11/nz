@@ -38,9 +38,9 @@ type statusData struct {
 type Daemon struct {
 	Version   string
 	cfgPath   string
-	keyPath   string
 	cfg       *config.Config
 	st        *state.State
+	id        *identity.Identity
 	srv       *server.Server
 	ln        net.Listener
 	startedAt time.Time
@@ -62,17 +62,16 @@ func New(cfgPath, version string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	keyPath := filepath.Join(filepath.Dir(cfgPath), config.KeyFileName)
-	id, err := identity.LoadOrCreate(keyPath)
+	id, err := loadOrCreateIdentity(st)
 	if err != nil {
 		return nil, err
 	}
 	d := &Daemon{
 		Version:   version,
 		cfgPath:   cfgPath,
-		keyPath:   keyPath,
 		cfg:       cfg,
 		st:        st,
+		id:        id,
 		startedAt: time.Now(),
 		stopCh:    make(chan struct{}),
 	}
@@ -114,7 +113,7 @@ func (d *Daemon) Serve(pingback, token string) error {
 	}
 	if d.cfg.Mode == "node" {
 		go func() {
-			if err := node.Run(d.cfg, d.keyPath); err != nil {
+			if err := node.Run(d.cfg, d.st, d.id); err != nil {
 				logx.Error("node stopped: %v", err)
 				d.Stop()
 			}
@@ -258,72 +257,62 @@ func (d *Daemon) handleList() ipc.Response {
 }
 
 func (d *Daemon) handleUsers() ipc.Response {
-	if d.cfg.Mode != "server" {
-		return ipc.Response{OK: false, Error: "users is only available on the server"}
-	}
-	users, machines := d.st.Snapshot()
-	for i := range machines {
-		if machines[i].User == d.cfg.Admin.Name {
-			machines[i].Trusted = true
+	if d.cfg.Mode == "node" {
+		reply, err := node.AdminCommand("users", "")
+		if err != nil {
+			return ipc.Response{OK: false, Error: err.Error()}
 		}
+		if !reply.OK {
+			return ipc.Response{OK: false, Error: reply.Error}
+		}
+		return ipc.Response{OK: true, Data: reply.Data}
 	}
-	return jsonData(struct {
-		Users    []state.User    `json:"users"`
-		Machines []state.Machine `json:"machines"`
-	}{users, machines})
-}
-
-func (d *Daemon) handleAdmin(req ipc.Request) ipc.Response {
-	if d.cfg.Mode != "server" {
-		return ipc.Response{OK: false, Error: fmt.Sprintf("%s is only available on the server", req.Command)}
-	}
-	user, machine, err := state.ParseTarget(req.Target)
+	data, err := d.srv.UsersData()
 	if err != nil {
 		return ipc.Response{OK: false, Error: err.Error()}
 	}
-	switch req.Command {
-	case "allow":
-		err = d.st.Allow(user, machine)
-		if err == nil && machine != "" {
-			err = d.approveMachine(user, machine)
+	return ipc.Response{OK: true, Data: data}
+}
+
+func (d *Daemon) handleAdmin(req ipc.Request) ipc.Response {
+	if d.cfg.Mode == "node" {
+		reply, err := node.AdminCommand(req.Command, req.Target)
+		if err != nil {
+			return ipc.Response{OK: false, Error: err.Error()}
 		}
-	case "deny":
-		err = d.st.Deny(user, machine)
-	case "block":
-		err = d.st.Block(user, machine)
-	case "unblock":
-		err = d.st.Unblock(user, machine)
-	case "trust":
-		err = d.st.Trust(user, machine)
-	case "untrust":
-		err = d.st.Untrust(user, machine)
+		if !reply.OK {
+			return ipc.Response{OK: false, Error: reply.Error}
+		}
+		return ipc.Response{OK: true}
 	}
-	if err != nil {
+	if err := d.srv.AdminCommand(req.Command, req.Target); err != nil {
 		return ipc.Response{OK: false, Error: err.Error()}
 	}
 	logx.Success("%s %s applied", req.Command, req.Target)
 	return ipc.Response{OK: true}
 }
 
-func (d *Daemon) approveMachine(user, machine string) error {
-	m, ok := d.st.GetMachine(user, machine)
-	if !ok {
-		return nil
+func loadOrCreateIdentity(st *state.State) (*identity.Identity, error) {
+	if st.Identity != nil {
+		return identity.FromParts(
+			st.Identity.SignPublic, st.Identity.SignPrivate,
+			st.Identity.ExchPublic, st.Identity.ExchPrivate)
 	}
-	if m.VPNIP == "" {
-		ip, err := d.st.AllocateIP(d.cfg.Subnet)
-		if err != nil {
-			return err
-		}
-		if err := d.st.SetMachineIP(user, machine, ip); err != nil {
-			return err
-		}
-		logx.Info("allocated %s for %s/%s", ip, user, machine)
+	id, err := identity.Generate()
+	if err != nil {
+		return nil, err
 	}
-	if d.srv != nil {
-		d.srv.NotifyApprove(user, machine)
+	sp, spr, ep, epr := id.Parts()
+	st.Identity = &state.IdentityData{
+		SignPublic:  sp,
+		SignPrivate: spr,
+		ExchPublic:  ep,
+		ExchPrivate: epr,
 	}
-	return nil
+	if err := st.Save(); err != nil {
+		return nil, err
+	}
+	return id, nil
 }
 
 func serverIP(d *Daemon) string {

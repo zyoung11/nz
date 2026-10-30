@@ -29,6 +29,8 @@ func (s *Server) handleSigned(env protocol.Envelope, remote netip.AddrPort) {
 		s.handlePeerQuery(signed, src)
 	case protocol.TypeMachineList:
 		s.handleMachineList(signed, src)
+	case protocol.TypeAdminRequest:
+		s.handleAdminRequest(signed, src)
 	case protocol.TypeKeepAlive:
 		s.st.Touch(src.User, src.Name)
 		s.sendSigned(protocol.SignedMessage{
@@ -244,6 +246,37 @@ func (s *Server) sendLocalData(dst netip.Addr, raw []byte) {
 	msg := protocol.SignedMessage{Type: protocol.TypeData, SrcIP: s.serverIP(), DstIP: dst, Payload: cipher}
 	body := protocol.MarshalSigned(msg, s.id.Sign)
 	s.sendRaw(protocol.Envelope{Type: protocol.TypeData, Body: body}, addr)
+}
+
+func (s *Server) handleAdminRequest(m protocol.SignedMessage, src state.Machine) {
+	var req protocol.AdminRequest
+	if err := protocol.DecodeJSON(m.Payload, &req); err != nil {
+		return
+	}
+	reply := protocol.AdminReply{OK: true}
+	if src.User != s.adminName() {
+		reply.OK = false
+		reply.Error = "only admin machines can manage"
+	} else if req.Command == "users" {
+		data, err := s.UsersData()
+		reply.OK = err == nil
+		reply.Data = data
+		if err != nil {
+			reply.Error = err.Error()
+		}
+	} else if err := s.AdminCommand(req.Command, req.Target); err != nil {
+		reply.OK = false
+		reply.Error = err.Error()
+	} else {
+		logx.Success("%s %s applied remotely", req.Command, req.Target)
+	}
+	signed := protocol.SignedMessage{
+		Type:    protocol.TypeAdminRpy,
+		SrcIP:   s.serverIP(),
+		DstIP:   m.SrcIP,
+		Payload: protocol.EncodeJSON(reply),
+	}
+	s.sendSigned(signed, s.ipEndpoint(m.SrcIP))
 }
 
 func (s *Server) sendSigned(m protocol.SignedMessage, addr netip.AddrPort) {

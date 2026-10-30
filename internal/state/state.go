@@ -47,11 +47,27 @@ type Machine struct {
 	JoinedAt    time.Time     `json:"joined_at"`
 }
 
+// IdentityData holds the machine key material.
+type IdentityData struct {
+	SignPublic  string `json:"sign_public"`
+	SignPrivate string `json:"sign_private"`
+	ExchPublic  string `json:"exch_public"`
+	ExchPrivate string `json:"exch_private"`
+}
+
+// ServerAuth holds the cached server public keys.
+type ServerAuth struct {
+	SignPub []byte `json:"sign_pub,omitempty"`
+	ExchPub []byte `json:"exch_pub,omitempty"`
+}
+
 type State struct {
-	mu       sync.Mutex
-	path     string
-	Users    []User    `json:"users"`
-	Machines []Machine `json:"machines"`
+	mu         sync.Mutex
+	path       string
+	Identity   *IdentityData `json:"identity,omitempty"`
+	ServerAuth *ServerAuth   `json:"server_auth,omitempty"`
+	Users      []User        `json:"users"`
+	Machines   []Machine     `json:"machines"`
 }
 
 // ParseTarget splits "friend" or "friend/laptop" into user and machine.
@@ -186,7 +202,8 @@ func (s *State) Block(user, machine string) error {
 	return s.saveLocked()
 }
 
-// Unblock restores a user or machine to active.
+// Unblock restores a blocked user or machine to active. Pending
+// entries are left untouched.
 func (s *State) Unblock(user, machine string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -195,7 +212,9 @@ func (s *State) Unblock(user, machine string) error {
 		if u == nil {
 			return fmt.Errorf("user %s not found", user)
 		}
-		u.Status = UserActive
+		if u.Status == UserBlocked {
+			u.Status = UserActive
+		}
 		for i := range s.Machines {
 			if s.Machines[i].User == user && s.Machines[i].Status == MachineBlocked {
 				s.Machines[i].Status = MachineActive
@@ -207,7 +226,9 @@ func (s *State) Unblock(user, machine string) error {
 	if m == nil {
 		return fmt.Errorf("machine %s/%s not found", user, machine)
 	}
-	m.Status = MachineActive
+	if m.Status == MachineBlocked {
+		m.Status = MachineActive
+	}
 	return s.saveLocked()
 }
 

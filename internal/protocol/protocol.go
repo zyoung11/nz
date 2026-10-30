@@ -26,6 +26,8 @@ const (
 	TypePeerIntro      MsgType = 0x22
 	TypeMachineList    MsgType = 0x30
 	TypeMachineListRpy MsgType = 0x31
+	TypeAdminRequest   MsgType = 0x32
+	TypeAdminRpy       MsgType = 0x33
 	TypeDisconnect     MsgType = 0x3f
 )
 

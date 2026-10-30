@@ -2,28 +2,27 @@ package identity
 
 import (
 	"bytes"
-	"path/filepath"
 	"testing"
 )
 
-func TestLoadOrCreateRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "n0.key")
-	first, err := LoadOrCreate(path)
+func TestPartsRoundTrip(t *testing.T) {
+	first, err := Generate()
 	if err != nil {
-		t.Fatalf("load or create: %v", err)
+		t.Fatalf("generate: %v", err)
 	}
-	second, err := LoadOrCreate(path)
+	sp, spr, ep, epr := first.Parts()
+	second, err := FromParts(sp, spr, ep, epr)
 	if err != nil {
-		t.Fatalf("reload: %v", err)
+		t.Fatalf("from parts: %v", err)
 	}
 	if !bytes.Equal(first.SignPublic, second.SignPublic) {
-		t.Errorf("signing public key changed after reload")
+		t.Errorf("signing public key changed after round trip")
 	}
 	if !bytes.Equal(first.ExchPublic, second.ExchPublic) {
-		t.Errorf("exchange public key changed after reload")
+		t.Errorf("exchange public key changed after round trip")
 	}
 	if Fingerprint(first.PublicBlob()) != Fingerprint(second.PublicBlob()) {
-		t.Errorf("fingerprint changed after reload")
+		t.Errorf("fingerprint changed after round trip")
 	}
 }
 

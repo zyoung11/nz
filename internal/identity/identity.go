@@ -7,9 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"os"
 
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/hkdf"
@@ -36,13 +34,6 @@ type Identity struct {
 	ExchPrivate *ecdh.PrivateKey
 }
 
-type keyFile struct {
-	SignPublic  string `json:"sign_public"`
-	SignPrivate string `json:"sign_private"`
-	ExchPublic  string `json:"exch_public"`
-	ExchPrivate string `json:"exch_private"`
-}
-
 // Generate creates a fresh machine identity with a signing key
 // and a key exchange key.
 func Generate() (*Identity, error) {
@@ -62,75 +53,42 @@ func Generate() (*Identity, error) {
 	}, nil
 }
 
-// Save writes the identity to path with owner-only permissions.
-func (i *Identity) Save(path string) error {
-	kf := keyFile{
-		SignPublic:  base64.StdEncoding.EncodeToString(i.SignPublic),
-		SignPrivate: base64.StdEncoding.EncodeToString(i.SignPrivate),
-		ExchPublic:  base64.StdEncoding.EncodeToString(i.ExchPublic),
-		ExchPrivate: base64.StdEncoding.EncodeToString(i.ExchPrivate.Bytes()),
-	}
-	data, err := json.MarshalIndent(kf, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to encode key file: %w", err)
-	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("failed to write key file %s: %w", path, err)
-	}
-	return nil
+// Parts returns the identity as base64 fields for storage.
+func (i *Identity) Parts() (string, string, string, string) {
+	return base64.StdEncoding.EncodeToString(i.SignPublic),
+		base64.StdEncoding.EncodeToString(i.SignPrivate),
+		base64.StdEncoding.EncodeToString(i.ExchPublic),
+		base64.StdEncoding.EncodeToString(i.ExchPrivate.Bytes())
 }
 
-// Load reads an identity from path.
-func Load(path string) (*Identity, error) {
-	data, err := os.ReadFile(path)
+// FromParts rebuilds an identity from stored base64 fields.
+func FromParts(signPub, signPriv, exchPub, exchPriv string) (*Identity, error) {
+	pub, err := base64.StdEncoding.DecodeString(signPub)
+	if err != nil || len(pub) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("bad signing public key")
+	}
+	priv, err := base64.StdEncoding.DecodeString(signPriv)
+	if err != nil || len(priv) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("bad signing private key")
+	}
+	exPub, err := base64.StdEncoding.DecodeString(exchPub)
+	if err != nil || len(exPub) != ExchangeKeySize {
+		return nil, fmt.Errorf("bad exchange public key")
+	}
+	exPrivBytes, err := base64.StdEncoding.DecodeString(exchPriv)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read key file %s: %w", path, err)
+		return nil, fmt.Errorf("bad exchange private key")
 	}
-	var kf keyFile
-	if err := json.Unmarshal(data, &kf); err != nil {
-		return nil, fmt.Errorf("failed to parse key file %s: %w", path, err)
-	}
-	signPub, err := base64.StdEncoding.DecodeString(kf.SignPublic)
-	if err != nil || len(signPub) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("key file %s has a bad signing public key", path)
-	}
-	signPriv, err := base64.StdEncoding.DecodeString(kf.SignPrivate)
-	if err != nil || len(signPriv) != ed25519.PrivateKeySize {
-		return nil, fmt.Errorf("key file %s has a bad signing private key", path)
-	}
-	exchPub, err := base64.StdEncoding.DecodeString(kf.ExchPublic)
-	if err != nil || len(exchPub) != ExchangeKeySize {
-		return nil, fmt.Errorf("key file %s has a bad exchange public key", path)
-	}
-	exchPrivBytes, err := base64.StdEncoding.DecodeString(kf.ExchPrivate)
+	exPriv, err := ecdh.X25519().NewPrivateKey(exPrivBytes)
 	if err != nil {
-		return nil, fmt.Errorf("key file %s has a bad exchange private key", path)
-	}
-	exchPriv, err := ecdh.X25519().NewPrivateKey(exchPrivBytes)
-	if err != nil {
-		return nil, fmt.Errorf("key file %s has a bad exchange private key: %w", path, err)
+		return nil, fmt.Errorf("bad exchange private key: %w", err)
 	}
 	return &Identity{
-		SignPublic:  ed25519.PublicKey(signPub),
-		SignPrivate: ed25519.PrivateKey(signPriv),
-		ExchPublic:  exchPub,
-		ExchPrivate: exchPriv,
+		SignPublic:  ed25519.PublicKey(pub),
+		SignPrivate: ed25519.PrivateKey(priv),
+		ExchPublic:  exPub,
+		ExchPrivate: exPriv,
 	}, nil
-}
-
-// LoadOrCreate returns the identity at path, generating one on first use.
-func LoadOrCreate(path string) (*Identity, error) {
-	if _, err := os.Stat(path); err == nil {
-		return Load(path)
-	}
-	id, err := Generate()
-	if err != nil {
-		return nil, err
-	}
-	if err := id.Save(path); err != nil {
-		return nil, err
-	}
-	return id, nil
 }
 
 // Sign signs msg with the machine signing key.

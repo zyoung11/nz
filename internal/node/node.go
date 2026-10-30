@@ -3,13 +3,10 @@ package node
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/netip"
-	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +15,7 @@ import (
 	"nz/internal/identity"
 	"nz/internal/logx"
 	"nz/internal/protocol"
+	"nz/internal/state"
 	"nz/internal/tun"
 )
 
@@ -49,11 +47,6 @@ func setConnState(state, ip string) {
 	connVPNIP.Store(ip)
 }
 
-type authData struct {
-	ServerSignPub []byte `json:"server_sign_pub,omitempty"`
-	ServerExchPub []byte `json:"server_exch_pub,omitempty"`
-}
-
 type peer struct {
 	signPub     []byte
 	exchPub     []byte
@@ -67,8 +60,7 @@ type peer struct {
 type Node struct {
 	cfg        *config.Config
 	id         *identity.Identity
-	auth       *authData
-	authPath   string
+	st         *state.State
 	conn       *net.UDPConn
 	serverAddr netip.AddrPort
 	vpnIP      netip.Addr
@@ -81,33 +73,26 @@ type Node struct {
 	joinReplyCh    chan protocol.Envelope
 	approveCh      chan protocol.Envelope
 	listReplyCh    chan protocol.Envelope
+	adminReplyCh   chan protocol.Envelope
 	lastServerSeen time.Time
 }
 
 // Run joins the network and forwards traffic until the process stops.
-func Run(cfg *config.Config, keyPath string) error {
+func Run(cfg *config.Config, st *state.State, id *identity.Identity) error {
 	if cfg.Mode != "node" {
 		return fmt.Errorf("node mode required")
-	}
-	id, err := identity.LoadOrCreate(keyPath)
-	if err != nil {
-		return err
-	}
-	auth, err := loadAuth(authPathOf(keyPath))
-	if err != nil {
-		return err
 	}
 	setConnState("connecting", "")
 	n := &Node{
 		cfg:          cfg,
 		id:           id,
-		auth:         auth,
-		authPath:     authPathOf(keyPath),
+		st:           st,
 		peers:        make(map[netip.Addr]*peer),
 		queryReplyCh: make(chan protocol.Envelope, 1),
 		joinReplyCh:  make(chan protocol.Envelope, 1),
 		approveCh:    make(chan protocol.Envelope, 1),
 		listReplyCh:  make(chan protocol.Envelope, 1),
+		adminReplyCh: make(chan protocol.Envelope, 1),
 	}
 	activeNode.Store(n)
 	if err := n.connect(); err != nil {
@@ -120,34 +105,12 @@ func Run(cfg *config.Config, keyPath string) error {
 	return n.serve()
 }
 
-func authPathOf(keyPath string) string {
-	return filepath.Join(filepath.Dir(keyPath), "n0.auth.json")
-}
-
-func loadAuth(path string) (*authData, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &authData{}, nil
-		}
-		return nil, fmt.Errorf("failed to read auth file %s: %w", path, err)
+func (n *Node) serverKeys() (signPub, exchPub []byte) {
+	sa := n.st.ServerAuth
+	if sa == nil {
+		return nil, nil
 	}
-	var a authData
-	if err := json.Unmarshal(data, &a); err != nil {
-		return nil, fmt.Errorf("failed to parse auth file %s: %w", path, err)
-	}
-	return &a, nil
-}
-
-func (n *Node) saveAuth() error {
-	data, err := json.MarshalIndent(n.auth, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to encode auth: %w", err)
-	}
-	if err := os.WriteFile(n.authPath, data, 0600); err != nil {
-		return fmt.Errorf("failed to write auth file %s: %w", n.authPath, err)
-	}
-	return nil
+	return sa.SignPub, sa.ExchPub
 }
 
 // verifier derives the user verifier, identical on every machine of
@@ -270,20 +233,20 @@ func (n *Node) acceptServerKeys(serverPub []byte) {
 	if err != nil {
 		return
 	}
-	if bytes.Equal(n.auth.ServerSignPub, signPub) {
+	oldSignPub, _ := n.serverKeys()
+	if bytes.Equal(oldSignPub, signPub) {
 		return
 	}
-	if len(n.auth.ServerSignPub) > 0 {
+	if len(oldSignPub) > 0 {
 		logx.Warn("server key changed, updating the stored key")
 	}
-	n.auth.ServerSignPub = signPub
-	n.auth.ServerExchPub = exchPub
+	n.st.ServerAuth = &state.ServerAuth{SignPub: signPub, ExchPub: exchPub}
+	if err := n.st.Save(); err != nil {
+		logx.Warn("%v", err)
+	}
 	n.mu.Lock()
 	delete(n.peers, serverAddrOf(n))
 	n.mu.Unlock()
-	if err := n.saveAuth(); err != nil {
-		logx.Warn("%v", err)
-	}
 }
 
 func (n *Node) adoptVPNIP(ipStr string) error {

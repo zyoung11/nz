@@ -42,7 +42,7 @@ GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o n0.exe ./cmd/n0
 1. 把 `n0` 和 `config.json` 放到同一目录。
 2. 服务器运行 `sudo n0 install --config config.json`。
 3. 你的机器运行 `sudo n0 install --config config.json`。
-4. 机器首次启动时自动生成密钥，随后自动入网。
+4. 机器首次启动时自动生成密钥，写入 `state.json`，随后自动入网。
 
 ## 配置文件
 
@@ -124,7 +124,7 @@ Linux 端 `n0 install` 生成 systemd unit，含 `Restart=always`。无 systemd 
 
 ## 日志
 
-常驻进程把日志写入 `n0.log`，与二进制同目录。日志超过 10 MB 时轮转为 `n0.log.1`。
+常驻进程把日志写入 `n0.log`，与二进制同目录。
 
 | 前缀 | 含义 |
 | --- | --- |
@@ -142,7 +142,7 @@ n0 与 nz 可同时运行在一台机器上，互不干扰。协议版本不同�
 | UDP 端口 | `4242` | `4399` |
 | 网段 | `192.168.100.0/24` | `192.168.200.0/24` |
 | TUN 设备名 | `nz0` | `n0` |
-| 状态文件 | `nz-state.json` | `n0-state.json` |
+| 状态文件 | `nz-state.json` | `state.json` |
 | 协议版本 | `0x02` | `0x03` |
 
 ## 测试
