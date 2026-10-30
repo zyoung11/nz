@@ -180,7 +180,7 @@ func (d *Daemon) handleStop() ipc.Response {
 func (d *Daemon) handleReload() ipc.Response {
 	cfg, err := config.Load(d.cfgPath)
 	if err != nil {
-		return ipc.Response{OK: false, Error: err.Error()}
+		return ipc.Response{OK: false, Error: fmt.Sprintf("config rejected, keep running with old config: %v", err)}
 	}
 	if err := cfg.Validate(); err != nil {
 		return ipc.Response{OK: false, Error: fmt.Sprintf("config rejected, keep running with old config: %v", err)}
@@ -239,9 +239,12 @@ func (d *Daemon) handleList() ipc.Response {
 		Trusted: true,
 	})
 	for _, m := range machines {
-		status := "offline"
-		if time.Since(m.LastSeen) < 15*time.Second {
-			status = "online"
+		status := "unknown"
+		if !m.LastSeen.IsZero() {
+			status = "offline"
+			if time.Since(m.LastSeen) < 15*time.Second {
+				status = "online"
+			}
 		}
 		peers = append(peers, protocol.PeerInfo{
 			User:    m.User,
@@ -259,6 +262,11 @@ func (d *Daemon) handleUsers() ipc.Response {
 		return ipc.Response{OK: false, Error: "users is only available on the server"}
 	}
 	users, machines := d.st.Snapshot()
+	for i := range machines {
+		if machines[i].User == d.cfg.Admin.Name {
+			machines[i].Trusted = true
+		}
+	}
 	return jsonData(struct {
 		Users    []state.User    `json:"users"`
 		Machines []state.Machine `json:"machines"`
