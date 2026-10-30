@@ -48,15 +48,15 @@ func printMachineTable(peers []protocol.PeerInfo) {
 	})
 }
 
-func printUserTable(users []state.User, machines []state.Machine, pendingOnly bool) {
+func printUserTable(users []state.User, machines []state.MachineView, pendingOnly bool) {
 	type rowDef struct {
 		user     string
 		status   string
-		machines []state.Machine
+		machines []state.MachineView
 	}
 	groups := make([]rowDef, 0, len(users))
 	for _, u := range users {
-		list := make([]state.Machine, 0)
+		list := make([]state.MachineView, 0)
 		for _, m := range machines {
 			if m.User == u.Name {
 				list = append(list, m)
@@ -98,8 +98,12 @@ func printUserTable(users []state.User, machines []state.Machine, pendingOnly bo
 		header := []string{"State", "Machine", "VPN IP", "Key", "Last Seen", "Trust"}
 		rows := make([][]string, 0, len(g.machines))
 		for _, m := range g.machines {
+			status := string(m.Status)
+			if m.Self {
+				status = "local"
+			}
 			rows = append(rows, []string{
-				string(m.Status), m.Name, dash(m.VPNIP), dash(m.Fingerprint),
+				status, m.Name, dash(m.VPNIP), dash(m.Fingerprint),
 				formatSeen(m.LastSeen), yesNo(m.Trusted),
 			})
 		}

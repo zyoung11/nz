@@ -62,6 +62,12 @@ type ServerAuth struct {
 	ExchPub []byte `json:"exch_pub,omitempty"`
 }
 
+// MachineView is a machine marked for the querying machine itself.
+type MachineView struct {
+	Machine
+	Self bool `json:"self,omitempty"`
+}
+
 type State struct {
 	mu         sync.Mutex
 	path       string

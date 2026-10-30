@@ -280,7 +280,7 @@ func (s *Server) handleAdminRequest(m protocol.SignedMessage, src state.Machine)
 		reply.OK = false
 		reply.Error = "only admin machines can manage"
 	} else if req.Command == "users" {
-		data, err := s.UsersData()
+		data, err := s.UsersData(src.User, src.Name)
 		reply.OK = err == nil
 		reply.Data = data
 		if err != nil {

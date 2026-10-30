@@ -435,8 +435,8 @@ func usersCmd(args []string) int {
 		return 1
 	}
 	var data struct {
-		Users    []state.User    `json:"users"`
-		Machines []state.Machine `json:"machines"`
+		Users    []state.User        `json:"users"`
+		Machines []state.MachineView `json:"machines"`
 	}
 	if err := json.Unmarshal([]byte(resp.Data), &data); err != nil {
 		logx.Error("failed to decode user list: %v", err)

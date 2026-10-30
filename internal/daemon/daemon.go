@@ -317,7 +317,7 @@ func (d *Daemon) handleUsers() ipc.Response {
 		}
 		return ipc.Response{OK: true, Data: reply.Data}
 	}
-	data, err := d.srv.UsersData()
+	data, err := d.srv.UsersData(d.cfg.Admin.Name, "server")
 	if err != nil {
 		return ipc.Response{OK: false, Error: err.Error()}
 	}

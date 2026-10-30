@@ -282,26 +282,34 @@ func (s *Server) approveMachine(user, machine string) error {
 	return nil
 }
 
-// UsersData returns the full user and machine table as JSON.
-func (s *Server) UsersData() (string, error) {
+// UsersData returns the full user and machine table as JSON, marking
+// the row that belongs to the querying machine.
+func (s *Server) UsersData(selfUser, selfMachine string) (string, error) {
 	users, machines := s.st.Snapshot()
-	for i := range machines {
-		if machines[i].User == s.cfg.Admin.Name {
-			machines[i].Trusted = true
+	views := make([]state.MachineView, 0, len(machines)+1)
+	views = append(views, state.MachineView{
+		Machine: state.Machine{
+			User:    s.cfg.Admin.Name,
+			Name:    "server",
+			VPNIP:   s.serverIP().String(),
+			Status:  state.MachineActive,
+			Trusted: true,
+		},
+		Self: selfMachine == "server" && selfUser == s.cfg.Admin.Name,
+	})
+	for _, m := range machines {
+		if m.User == s.cfg.Admin.Name {
+			m.Trusted = true
 		}
+		views = append(views, state.MachineView{
+			Machine: m,
+			Self:    m.User == selfUser && m.Name == selfMachine,
+		})
 	}
-	server := state.Machine{
-		User:    s.cfg.Admin.Name,
-		Name:    "server",
-		VPNIP:   s.serverIP().String(),
-		Status:  state.MachineStatus("local"),
-		Trusted: true,
-	}
-	machines = append([]state.Machine{server}, machines...)
 	data, err := json.Marshal(struct {
-		Users    []state.User    `json:"users"`
-		Machines []state.Machine `json:"machines"`
-	}{users, machines})
+		Users    []state.User        `json:"users"`
+		Machines []state.MachineView `json:"machines"`
+	}{users, views})
 	if err != nil {
 		return "", err
 	}
