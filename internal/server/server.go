@@ -290,6 +290,14 @@ func (s *Server) UsersData() (string, error) {
 			machines[i].Trusted = true
 		}
 	}
+	server := state.Machine{
+		User:    s.cfg.Admin.Name,
+		Name:    "server",
+		VPNIP:   s.serverIP().String(),
+		Status:  state.MachineStatus("local"),
+		Trusted: true,
+	}
+	machines = append([]state.Machine{server}, machines...)
 	data, err := json.Marshal(struct {
 		Users    []state.User    `json:"users"`
 		Machines []state.Machine `json:"machines"`
