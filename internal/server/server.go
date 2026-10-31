@@ -176,6 +176,7 @@ func (s *Server) handleJoinProof(body []byte, remote netip.AddrPort) {
 		return
 	}
 	reply := protocol.JoinReply{Result: status}
+	s.ensureInSubnet(msg.User, msg.Machine)
 	s.rebindDesired(msg.User, msg.Machine, msg.DesiredIP)
 	if status == string(state.MachinePending) {
 		if s.autoApproveAdmin(msg.User, msg.Machine) {
@@ -410,6 +411,31 @@ func (s *Server) UsersData(selfUser, selfMachine string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// ensureInSubnet reallocates the address when the machine address fell
+// out of the configured subnet, for example after a subnet change.
+func (s *Server) ensureInSubnet(user, machine string) {
+	m, ok := s.st.GetMachine(user, machine)
+	if !ok || m.VPNIP == "" {
+		return
+	}
+	prefix, err := netip.ParsePrefix(s.cfg.Subnet)
+	if err != nil {
+		return
+	}
+	ip, err := netip.ParseAddr(m.VPNIP)
+	if err == nil && prefix.Contains(ip) {
+		return
+	}
+	newIP, err := s.st.AllocateIP(s.cfg.Subnet, m.DesiredIP)
+	if err != nil {
+		logx.Warn("subnet reallocation for %s/%s failed: %v", user, machine, err)
+		return
+	}
+	if err := s.st.SetMachineIP(user, machine, newIP); err == nil {
+		logx.Success("%s/%s moved to %s for the new subnet", user, machine, newIP)
+	}
 }
 
 // rebindDesired moves an active machine when its pinned ip changed.

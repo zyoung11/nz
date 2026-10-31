@@ -13,7 +13,7 @@ import (
 	"nz/internal/ipc"
 )
 
-const unitName = "n0.service"
+const unitName = "nz.service"
 
 func install(cfgPath string) error {
 	if _, err := os.Stat("/run/systemd/system"); err != nil {
@@ -34,15 +34,15 @@ func install(cfgPath string) error {
 	}
 	for _, cmd := range [][]string{
 		{"systemctl", "daemon-reload"},
-		{"systemctl", "enable", "n0"},
-		{"systemctl", "restart", "n0"},
+		{"systemctl", "enable", "nz"},
+		{"systemctl", "restart", "nz"},
 	} {
 		if out, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput(); err != nil {
 			return fmt.Errorf("%s failed: %v (%s)", strings.Join(cmd, " "), err, strings.TrimSpace(string(out)))
 		}
 	}
 	time.Sleep(time.Second)
-	out, _ := exec.Command("systemctl", "is-active", "n0").Output()
+	out, _ := exec.Command("systemctl", "is-active", "nz").Output()
 	status := strings.TrimSpace(string(out))
 	if status != "active" {
 		return fmt.Errorf("service is %q after start, check journalctl -u n0", status)
@@ -54,8 +54,8 @@ func uninstall() error {
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("uninstall requires root, run with sudo")
 	}
-	exec.Command("systemctl", "stop", "n0").Run()
-	exec.Command("systemctl", "disable", "n0").Run()
+	exec.Command("systemctl", "stop", "nz").Run()
+	exec.Command("systemctl", "disable", "nz").Run()
 	os.Remove(ipc.SocketPath())
 	unitPath := filepath.Join("/etc/systemd/system", unitName)
 	if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
@@ -71,7 +71,7 @@ func runIfService(run func() error, _ func()) error {
 
 func unitText(exe, cfgPath string) string {
 	return fmt.Sprintf(`[Unit]
-Description=n0 overlay network
+Description=nz overlay network
 After=network-online.target
 Wants=network-online.target
 

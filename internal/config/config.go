@@ -10,12 +10,12 @@ import (
 
 const (
 	DefaultPort    = 4399
-	DefaultSubnet  = "192.168.200.0/24"
+	DefaultSubnet  = "192.168.100.0/24"
 	ConfigFileName = "config.json"
 	KeyFileName    = "n0.key"
 	StateFileName  = "state.json"
-	LogFileName    = "n0.log"
-	TunName        = "n0"
+	LogFileName    = "nz.log"
+	TunName        = "nz"
 )
 
 type Account struct {

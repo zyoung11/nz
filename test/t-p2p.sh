@@ -3,7 +3,7 @@ source "$(dirname "$0")/lib.sh"
 
 info "same user machines reach each other"
 
-n0s allow friend/pc
+nzs allow friend/pc
 sleep 2
 wait_joined node-c 10
 

@@ -1,30 +1,28 @@
-# n0
+# nz
 
-n0 是个人用的虚拟局域网工具。一台服务器，多台机器，把你的设备连成一个虚拟局域网。n0 从 nz 分叉，是协议重做的大版本，只支持 Linux 和 Windows。
+nz is a personal overlay network tool. One server, many machines, joined into one virtual LAN. nz is a ground-up rewrite of nz with a new protocol. It runs on Linux and Windows.
 
-## 编译
-
-前置条件：Go 版本不小于 1.26。
+## Build
 
 ```bash
-go build -ldflags="-s -w" -o n0 ./cmd/n0
-GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o n0.exe ./cmd/n0
+go build -ldflags="-s -w" -o nz ./cmd/nz
+GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o nz.exe ./cmd/nz
 ```
 
-## 快速上手
+## Quick Start
 
-服务器端 `config.json`：
+Server `config.json`:
 
 ```json
 {
   "mode": "server",
   "port": 4399,
-  "subnet": "192.168.200.0/24",
+  "subnet": "192.168.100.0/24",
   "admin": {"name": "me", "password": "strong-password"}
 }
 ```
 
-节点端 `config.json`：
+Node `config.json`:
 
 ```json
 {
@@ -37,147 +35,167 @@ GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o n0.exe ./cmd/n0
 }
 ```
 
-部署步骤：
+Deploy steps:
 
-1. 把 `n0` 和 `config.json` 放到同一目录。
-2. 服务器运行 `sudo n0 install --config config.json`。
-3. 你的机器运行 `sudo n0 install --config config.json`。
-4. 机器首次启动时自动生成密钥，写入 `state.json`，随后自动入网。
+1. Put `nz` and `config.json` in one directory.
+2. On the server run `sudo nz install --config config.json`.
+3. On your machines run `sudo nz install --config config.json`.
+4. The first start generates the machine key and joins the network.
 
-## 配置文件
+## Configuration
 
-| 字段 | 模式 | 必填 | 说明 |
+| Field | Mode | Required | Meaning |
 | --- | --- | --- | --- |
-| `mode` | 全部 | 是 | `server` 或 `node` |
-| `port` | 全部 | 否 | 默认 `4399` |
-| `subnet` | server | 否 | 默认 `192.168.200.0/24` |
-| `admin` | server | 是 | 管理员账号，含 `name` 和 `password` |
-| `user` | node | 是 | 所属用户名 |
-| `password` | node | 是 | 用户密码 |
-| `name` | node | 是 | 机器名，同一用户内唯一 |
-| `domain` | node | 是 | 服务器地址，域名或 IP |
-| `ip` | node | 否 | 指定 VPN IP 尾号，2 至 254，不填则自动分配 |
+| `mode` | all | yes | `server` or `node` |
+| `port` | all | no | default `4399` |
+| `subnet` | server | no | default `192.168.100.0/24` |
+| `admin` | server | yes | admin account with `name` and `password` |
+| `user` | node | yes | owning user name |
+| `password` | node | yes | user password |
+| `name` | node | yes | machine name, unique per user |
+| `domain` | node | yes | server address, host name or IP |
+| `ip` | node | no | pinned VPN host number from 2 to 254 |
 
-服务器读取 `admin` 作为管理员账号。管理员的机器注册后自动批准。节点保存 `Argon2id(password, salt)` 验证值，两端都不保存密码原文。
+The server reads `admin` as the administrator account. Machines of the admin user are approved automatically.
 
-`ip` 只在首次分配生效，重连永远复用原地址。指定的地址被其他机器占用时，批准显示错误，不会静默换号。
+A node stores only `Argon2id(password, salt)` in `state.json`. Neither side keeps the password in plain text.
 
-## 命令参考
+`ip` applies at first allocation only. Reconnects always reuse the address. A pinned address owned by another machine makes approval fail with `ip ... already used by ...`. An address is bound to a machine key and cannot be taken over.
 
-| 命令 | 作用 |
+## Hot Reload Rules
+
+`nz reload` handles fields in two ways.
+
+On a node every field takes effect. The tunnel restarts with the new config, so `user`, `password`, `name`, `domain` and `ip` changes are usable at once.
+
+On the server only `admin.password` is hot reloaded. `port`, `subnet`, `admin.name` and `mode` are structural. Reload refuses them and asks for a service reinstall.
+
+## Commands
+
+| Command | Meaning |
 | --- | --- |
-| `n0 run --config <path>` | 前台运行，日志输出到终端 |
-| `n0 start --config <path>` | 后台运行，立即返回 |
-| `n0 stop --config <path>` | 停止常驻进程 |
-| `n0 reload --config <path>` | 校验新配置，通过后应用 |
-| `n0 status --config <path>` | 显示进程与连接状态 |
-| `n0 list --config <path>` | 显示机器列表 |
-| `n0 users [--pending]` | 显示用户与机器全表 |
-| `n0 install --config <path>` | 注册开机自启 |
-| `n0 uninstall` | 移除开机自启 |
-| `n0 allow <target>` | 批准申请 |
-| `n0 deny <target>` | 拒绝申请 |
-| `n0 block <target>` | 封禁 |
-| `n0 unblock <target>` | 解除封禁 |
-| `n0 trust <target>` | 加入信任，放行连管理员的机器 |
-| `n0 untrust <target>` | 移出信任 |
+| `nz run --config <path>` | run in foreground, for debugging |
+| `nz install --config <path>` | start the daemon and enable auto-start |
+| `nz uninstall` | stop the daemon and disable auto-start |
+| `nz reload --config <path>` | validate config and apply it |
+| `nz list [--pending]` | status line plus the user and machine tables |
+| `nz ls [--pending]` | short form of `list` |
+| `nz allow <target> [--to <machine>]` | approve or unblock or authorize |
+| `nz deny <target> [--to <machine>]` | reject or block or revoke |
+| `nz version` | show version |
 
-目标语法统一：`friend` 指用户，`friend/laptop` 指机器。管理命令只对管理员开放。
+Aliases: `version` also accepts `-v`, `-V` and `--version`. Help accepts `help`, `-h` and `--help`, and every subcommand does too.
 
-## 热加载规则
+Target syntax: `friend` is a user, `friend/laptop` is a machine. `--to` picks the machine being authorized. Without `--to` the target is the machine running the command.
 
-`n0 reload` 对字段的处理分两类。
+`allow` and `deny` act on the current state of the target:
 
-node 模式全字段生效。reload 后隧道以新配置重启，`user`、`password`、`name`、`domain`、`ip` 的变化立即可用。
-
-server 模式只接受 `admin.password` 热更。`port`、`subnet`、`admin.name` 和 `mode` 是结构性参数，reload 拒绝并提示重装服务。这些参数需要 `n0 uninstall` 加 `n0 install`。
-
-## 加入流程
-
-朋友的机器需要你批准才能入网。流程如下。
-
-1. 朋友写节点 `config.json`，`user` 填自己的用户名，`password` 填自己的密码。
-2. 朋友运行 `n0 start --config config.json`。机器生成密钥并发送申请。
-3. 你运行 `n0 users --pending`，查看申请。
-4. 你运行 `n0 allow friend`，批准用户。
-5. 你运行 `n0 allow friend/laptop`，批准机器。服务器推送批准通知。
-6. 机器收到通知，立即入网。你无需让朋友重启。
-
-推送丢失时机器每 5 秒重发申请。朋友加第二台机器时重复第 1 至 6 步。用户已批准时只批机器。
-
-## 连接策略
-
-| 源机器 | 目标机器 | 默认 |
+| Target state | `allow` | `deny` |
 | --- | --- | --- |
-| 管理员的机器 | 任何机器 | 放行，支持点对点（P2P） |
-| 同一用户的机器 | 同一用户的机器 | 放行，支持 P2P |
-| 普通用户的机器 | 管理员的机器 | 拒绝，`trust` 放行 |
-| 用户甲的机器 | 用户乙的机器 | 拒绝 |
+| pending | approve and allocate an IP | delete the request |
+| blocked | unblock | keep blocked |
+| active | add a grant toward the target machine | block and revoke grants |
 
-`trust` 放行后双向互通，支持 P2P。
+## Join Flow
 
-单向放行的对强制中继。发起方可以呼叫对方，对方只能应答，不能反向发起。判定依据是包的性质：TCP 的 SYN 和 ICMP 的请求算发起，其余算应答。
+A friend machine needs approval before it can join.
 
-## 安全机制
+1. The friend writes a node `config.json` with `user` and `password`.
+2. The friend runs `sudo nz install --config config.json`.
+3. The machine generates its key and sends a request.
+4. You run `nz list --pending` to see the request.
+5. You run `nz allow friend` to approve the user.
+6. You run `nz allow friend/laptop` to approve the machine. The server pushes the approval.
 
-1. 每台机器独立密钥对，注册时登记公钥。机器名是标签，身份是公钥。
-2. 数据端到端加密。密钥交换用椭圆曲线迪菲-赫尔曼（ECDH），每对机器一把会话密钥。
-3. 路由头带机器签名，服务器只读路由头做策略，不读数据体。
-4. 网际协议（IP）地址由服务器分配并绑定公钥，机器不能自选。
-5. 中继包按签名身份判源，包内声明的源地址不可信。
-6. 信任和封禁按公钥判定，改机器名无效。
+The machine joins at once. A lost push is retried every 5 seconds.
 
-## 服务集成
+## Access Control
 
-Windows 端 `n0 install` 注册 Windows 服务。服务在开机时启动，早于用户登录。失败恢复策略自动重启进程，退避上限 30 秒。
+| Source | Target | Default |
+| --- | --- | --- |
+| admin machines | any machine | allowed, P2P allowed |
+| same user machines | same user machines | allowed, P2P allowed |
+| plain user machines | admin machines | denied, grants open it |
+| user A machines | user B machines | denied |
 
-Linux 端 `n0 install` 生成 systemd unit，含 `Restart=always`。无 systemd 的机器运行 `n0 start`，配任意 init。
+A grant is a pair: who may actively call which machine. `nz allow friend` run on laptop authorizes friend to call laptop. `--to homelab` picks another machine. A user level grant covers all machines of that user, a machine level grant covers one machine.
 
-## 日志
+A pair with one direction forced uses relay. The caller may start a call, the other side may only answer. A TCP SYN or an ICMP request is a call start, anything else is an answer.
 
-默认不写日志文件。需要时给 `run` 或 `start` 加 `--log`，日志写入二进制同目录的 `n0.log`。
+## Security
 
-| 前缀 | 含义 |
+1. Every machine has its own key pair, registered as a public key. The machine name is a label, the identity is the key.
+2. Data is end to end encrypted. Key agreement uses elliptic curve Diffie-Hellman, one session key per machine pair.
+3. The routing header is signed by the machine, so the server applies policy on the header without reading the payload.
+4. The server allocates VPN addresses and binds them to machine keys.
+5. Relay packets are identified by the signed identity. The claimed source address is never trusted.
+6. Grants and blocks use keys, so renaming a machine changes nothing.
+
+## Service Integration
+
+On Windows `nz install` registers a Windows service. It starts at boot before user logon. The failure recovery policy restarts the process with a delay up to 30 seconds.
+
+On Linux `nz install` writes a systemd unit with `Restart=always`. Without systemd run `nz start` with any init.
+
+## Logging
+
+No log file is written by default. Pass `--log` to `run` or `start` to write `nz.log` next to the binary. The file rotates to `nz.log.1` above 10 MB.
+
+| Prefix | Meaning |
 | --- | --- |
-| `[i]` | 状态信息 |
-| `[+]` | 操作成功 |
-| `[!]` | 警告 |
-| `[-]` | 错误 |
+| `[i]` | status |
+| `[+]` | success |
+| `[!]` | warning |
+| `[-]` | error |
 
-## 与 nz 并行共存
+## Runtime Files
 
-n0 与 nz 可同时运行在一台机器上，互不干扰。协议版本不同，两个网络不能互通。
+The program directory keeps only two files.
 
-| 项 | nz | n0 |
+| Artifact | Location | Note |
 | --- | --- | --- |
-| UDP 端口 | `4242` | `4399` |
-| 网段 | `192.168.100.0/24` | `192.168.200.0/24` |
-| TUN 设备名 | `nz0` | `n0` |
-| 状态文件 | `nz-state.json` | `state.json` |
-| 协议版本 | `0x02` | `0x03` |
+| `config.json` | program directory | written by you |
+| `state.json` | program directory | written by the program, mode 0600 |
+| admin socket | `/tmp/nz.sock` | removed on stop, Windows uses a named pipe |
+| log | `nz.log` | only with `--log` |
+| TUN device | kernel | created after joining |
 
-## 测试
+`state.json` holds the machine key pair, the cached server keys, the user table, the machine table and the grant list.
 
-测试用 podman 建 4 个容器。前置条件：podman、Go。
+## Coexistence with nz
+
+nz and nz run side by side without interference. The protocols differ and the two networks never mix.
+
+| Item | nz | nz |
+| --- | --- | --- |
+| UDP port | `4242` | `4399` |
+| subnet | `192.168.100.0/24` | configurable |
+| TUN name | `nz0` | `nz` |
+| state file | `state.json` | `state.json` |
+| protocol | `0x02` | `0x03` |
+
+## Testing
+
+The test suite uses podman with four containers.
 
 ```bash
 cd test
 ./run-all.sh
 ```
 
-覆盖范围：申请批准、IP 分配、互通、方向阻断、封禁、信任、伪造防护、与 nz 共行。不覆盖 Windows 服务、wintun 驱动、真实 NAT 打洞。
+Covered: join and approval, IP allocation, connectivity matrix, direction blocking, blocking and unblocking, grants, forged sources, key rotation, remote management, CLI display, edge cases, multi user isolation and coexistence with nz. Not covered: the Windows service, the wintun driver and real NAT traversal.
 
-## 术语表
+## Glossary
 
-| 术语 | 英文 | 定义 |
-| --- | --- | --- |
-| 网络 | network | 一台服务器和全部机器构成的整体 |
-| 用户 | user | 持有密码的账号，机器的属主 |
-| 机器 | machine | 一台接入网络的设备 |
-| 常驻进程 | daemon | 提供转发和管理接口的后台进程 |
-| 管理接口 | admin socket | 本机内部通信通道 |
-| 点对点连接 | P2P | 机器之间不经过服务器的直连 |
-| 中继 | relay | 流量经过服务器转发的连接方式 |
-| 信任 | trust | 允许机器主动呼叫管理员的授权条目 |
-| 批准 | approve | 管理员同意申请的动作 |
-| 验证值 | verifier | 由密码派生的单向校验数据 |
+| Term | Meaning |
+| --- | --- |
+| network | one server and all machines |
+| user | an account owning machines |
+| machine | one device in the network |
+| daemon | the background process doing forwarding and management |
+| admin socket | the local IPC channel for CLI commands |
+| P2P | a direct path between two machines without the server |
+| relay | forwarding through the server |
+| grant | an authorization for one machine to call another |
+| approval | the admin act of letting a request join |
+| verifier | one way data derived from a password |

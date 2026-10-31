@@ -3,9 +3,9 @@ set -u
 
 TESTDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(dirname "$TESTDIR")"
-NET=n0-net
+NET=nz-net
 IMG=docker.io/library/ubuntu:24.04
-BIN="$TESTDIR/bin/n0"
+BIN="$TESTDIR/bin/nz"
 BIN_V1="$TESTDIR/bin/nz"
 
 BLUE='\033[38;2;138;173;244m'
@@ -52,24 +52,24 @@ expect_not_contains() {
 	fi
 }
 
-n0s() { podman exec n0-server n0 "$@"; }
+nzs() { podman exec nz-server nz "$@"; }
 
-n0c() {
+nzc() {
 	local container="$1"
 	shift
-	podman exec "n0-$container" n0 "$@"
+	podman exec "nz-$container" nz "$@"
 }
 
 start_node_daemon() {
 	local container="$1"
-	podman exec "n0-$container" pkill -f "n0 run" >/dev/null 2>&1
+	podman exec "nz-$container" pkill -f "nz run" >/dev/null 2>&1
 	sleep 1
-	podman exec "n0-$container" sh -c 'rm -f /usr/local/bin/n0.log'
-	podman exec -d "n0-$container" sh -c 'n0 run --config /cfg/config.json --log 2>> /usr/local/bin/n0.log'
+	podman exec "nz-$container" sh -c 'rm -f /usr/local/bin/nz.log'
+	podman exec -d "nz-$container" sh -c 'nz run --config /cfg/config.json --log 2>> /usr/local/bin/nz.log'
 }
 
 container_log() {
-	podman exec "n0-$1" sh -c 'cat /usr/local/bin/n0.log 2>/dev/null'
+	podman exec "nz-$1" sh -c 'cat /usr/local/bin/nz.log 2>/dev/null'
 }
 
 wait_joined() {
@@ -91,7 +91,7 @@ wait_pending() {
 	local name="$1" timeout="${2:-20}"
 	local deadline=$((SECONDS + timeout))
 	while ((SECONDS < deadline)); do
-		if [[ "$(podman exec n0-server n0 list --pending 2>&1)" == *"$name"* ]]; then
+		if [[ "$(podman exec nz-server nz list --pending 2>&1)" == *"$name"* ]]; then
 			return 0
 		fi
 		sleep 1
@@ -102,14 +102,14 @@ wait_pending() {
 }
 
 machine_ip() {
-	n0s list | grep -oE "192\.168\.200\.[0-9]+" | sed -n "${1}p"
+	nzs list | grep -oE "192\.168\.200\.[0-9]+" | sed -n "${1}p"
 }
 
 reset_grants() {
-	podman cp n0-server:/cfg/state.json /tmp/n0-state.json 2>/dev/null
+	podman cp nz-server:/cfg/state.json /tmp/nz-state.json 2>/dev/null
 	python3 - <<'PYEOF2'
 import json
-d = json.load(open("/tmp/n0-state.json"))
+d = json.load(open("/tmp/nz-state.json"))
 d["grants"] = []
 for m in d.get("machines", []):
     if m.get("status") == "blocked":
@@ -117,17 +117,17 @@ for m in d.get("machines", []):
 for u in d.get("users", []):
     if u.get("status") == "blocked":
         u["status"] = "active"
-json.dump(d, open("/tmp/n0-state.json", "w"), indent=2)
+json.dump(d, open("/tmp/nz-state.json", "w"), indent=2)
 PYEOF2
-	podman cp /tmp/n0-state.json n0-server:/cfg/state.json 2>/dev/null
-	podman exec n0-server pkill -f "n0 run" >/dev/null 2>&1
+	podman cp /tmp/nz-state.json nz-server:/cfg/state.json 2>/dev/null
+	podman exec nz-server pkill -f "nz run" >/dev/null 2>&1
 	sleep 1
-	podman exec -d n0-server sh -c 'n0 run --config /cfg/config.json --log 2>> /usr/local/bin/n0.log'
+	podman exec -d nz-server sh -c 'nz run --config /cfg/config.json --log 2>> /usr/local/bin/nz.log'
 	sleep 6
 }
 
 machine_ip_of() {
-	n0s list | sed 's/\x1b\[[0-9;]*m//g' | awk -v user="$1" -v name="$2" -F'│' '{
+	nzs list | sed 's/\x1b\[[0-9;]*m//g' | awk -v user="$1" -v name="$2" -F'│' '{
 		gsub(/^ +| +$/, "", $2)
 		gsub(/^ +| +$/, "", $3)
 		if ($2 == user && $3 == name) {
@@ -143,7 +143,7 @@ machine_ip_of() {
 }
 
 machine_ip_by_name() {
-	n0s list | sed 's/\x1b\[[0-9;]*m//g' | awk -v name="$1" -F'│' '{
+	nzs list | sed 's/\x1b\[[0-9;]*m//g' | awk -v name="$1" -F'│' '{
 		gsub(/^ +| +$/, "", $2)
 		if ($2 == name) {
 			for (i = 1; i <= NF; i++) {
@@ -159,7 +159,7 @@ machine_ip_by_name() {
 
 ping_vpn() {
 	local container="$1" target="$2"
-	podman exec "n0-$container" ping -c 2 -W 2 "$target" >/dev/null 2>&1
+	podman exec "nz-$container" ping -c 2 -W 2 "$target" >/dev/null 2>&1
 }
 
 finish() {

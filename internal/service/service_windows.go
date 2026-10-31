@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/windows/svc"
 )
 
-const serviceName = "n0"
+const serviceName = "nz"
 
 func install(cfgPath string) error {
 	exe, err := os.Executable()

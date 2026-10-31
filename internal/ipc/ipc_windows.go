@@ -22,7 +22,7 @@ func Dial(_ string) (net.Conn, error) {
 
 // socketPath returns the admin named pipe location.
 func socketPath() string {
-	return `\\.\pipe\n0`
+	return `\\.\pipe\nz`
 }
 
 // connUID reports the caller, the pipe ACL already limits access to

@@ -44,7 +44,7 @@ func connUID(conn net.Conn) uint32 {
 // socketPath returns the admin socket location under /tmp so the
 // program directory stays clean.
 func socketPath() string {
-	return "/tmp/n0.sock"
+	return "/tmp/nz.sock"
 }
 
 // Dial connects to the admin Unix socket at path.

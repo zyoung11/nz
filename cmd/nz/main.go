@@ -40,16 +40,16 @@ type command struct {
 var commands = []command{
 	{
 		name: "run", summary: "Run in foreground for debugging",
-		usage: "n0 run [--config <path>] [--log]",
+		usage: "nz run [--config <path>] [--log]",
 		options: [][2]string{
 			{"--config <path>", "config file path"},
-			{"--log", "write n0.log next to the binary"},
+			{"--log", "write nz.log next to the binary"},
 		},
 		run: runCmd,
 	},
 	{
 		name: "install", summary: "Start the daemon and enable auto-start",
-		usage: "n0 install [--config <path>]",
+		usage: "nz install [--config <path>]",
 		options: [][2]string{
 			{"--config <path>", "config file path"},
 		},
@@ -57,17 +57,25 @@ var commands = []command{
 	},
 	{
 		name: "uninstall", summary: "Stop the daemon and disable auto-start",
-		usage: "n0 uninstall",
+		usage: "nz uninstall",
 		run:   uninstallCmd,
 	},
 	{
 		name: "reload", summary: "Validate config and apply it",
-		usage: "n0 reload",
+		usage: "nz reload",
 		run:   reloadCmd,
 	},
 	{
 		name: "list", summary: "Show status and the machine table",
-		usage: "n0 list [--pending]",
+		usage: "nz list [--pending]",
+		options: [][2]string{
+			{"--pending", "show join requests only"},
+		},
+		run: listCmd,
+	},
+	{
+		name: "ls", summary: "Short form of list",
+		usage: "nz ls [--pending]",
 		options: [][2]string{
 			{"--pending", "show join requests only"},
 		},
@@ -75,7 +83,7 @@ var commands = []command{
 	},
 	{
 		name: "allow", summary: "Approve or unblock or authorize",
-		usage: "n0 allow <target> [--to <machine>]",
+		usage: "nz allow <target> [--to <machine>]",
 		options: [][2]string{
 			{"--to <machine>", "machine to authorize, default this machine"},
 		},
@@ -83,7 +91,7 @@ var commands = []command{
 	},
 	{
 		name: "deny", summary: "Reject or block or revoke",
-		usage: "n0 deny <target> [--to <machine>]",
+		usage: "nz deny <target> [--to <machine>]",
 		options: [][2]string{
 			{"--to <machine>", "machine to revoke, default this machine"},
 		},
@@ -91,7 +99,7 @@ var commands = []command{
 	},
 	{
 		name: "version", summary: "Show version",
-		usage: "n0 version",
+		usage: "nz version",
 		run:   versionCmd,
 	},
 }
@@ -132,22 +140,22 @@ func runCmd(args []string) int {
 	fs.Usage = func() {
 		printCommandUsage(command{
 			name: "run", summary: "Run in foreground for debugging",
-			usage: "n0 run [--config <path>] [--log]",
+			usage: "nz run [--config <path>] [--log]",
 			options: [][2]string{
 				{"--config <path>", "config file path"},
-				{"--log", "write n0.log next to the binary"},
+				{"--log", "write nz.log next to the binary"},
 			},
 		})
 	}
 	cfgPath := fs.String("config", config.DefaultPath(), "config file path")
-	logFlag := fs.Bool("log", false, "write n0.log next to the binary")
+	logFlag := fs.Bool("log", false, "write nz.log next to the binary")
 	pingback := fs.String("pingback", "", "pingback address for background start")
 	token := fs.String("token", "", "pingback token for background start")
 	fs.Parse(args)
 
 	if daemon.CheckSocket() {
 		logx.Error("daemon is already running")
-		logx.Info("use n0 uninstall first")
+		logx.Info("use nz uninstall first")
 		return 1
 	}
 	if err := tun.CheckPermission(); err != nil {
@@ -187,7 +195,7 @@ func installCmd(args []string) int {
 	fs.Usage = func() {
 		printCommandUsage(command{
 			name: "install", summary: "Start the daemon and enable auto-start",
-			usage: "n0 install [--config <path>]",
+			usage: "nz install [--config <path>]",
 			options: [][2]string{
 				{"--config <path>", "config file path"},
 			},
@@ -247,7 +255,7 @@ func listCmd(args []string) int {
 	fs.Usage = func() {
 		printCommandUsage(command{
 			name: "list", summary: "Show status and the machine table",
-			usage: "n0 list [--pending]",
+			usage: "nz list [--pending]",
 			options: [][2]string{
 				{"--pending", "show join requests only"},
 			},
@@ -310,8 +318,8 @@ func grantCmd(name, summary string) func([]string) int {
 	return func(args []string) int {
 		subject, to, ok := parseTargetArgs(args)
 		if !ok {
-			logx.Error("n0 %s needs one target", name)
-			printCommandUsage(command{name: name, summary: summary, usage: "n0 " + name + " <target> [--to <machine>]"})
+			logx.Error("nz %s needs one target", name)
+			printCommandUsage(command{name: name, summary: summary, usage: "nz " + name + " <target> [--to <machine>]"})
 			return 1
 		}
 		resp, ok := send(ipc.Request{Command: name, Target: subject, To: to})
@@ -359,10 +367,10 @@ func send(req ipc.Request) (ipc.Response, bool) {
 	if err != nil {
 		if _, statErr := os.Stat(ipc.SocketPath()); statErr == nil {
 			logx.Error("admin socket exists but no daemon answers")
-			logx.Info("start it with n0 install")
+			logx.Info("start it with nz install")
 		} else {
 			logx.Error("daemon is not running")
-			logx.Info("start it with n0 install")
+			logx.Info("start it with nz install")
 		}
 		return resp, false
 	}
@@ -370,7 +378,7 @@ func send(req ipc.Request) (ipc.Response, bool) {
 }
 
 func versionCmd(_ []string) int {
-	fmt.Printf("%sn0%s %s%s%s\n", colorBlue, colorReset, colorGreen, version, colorReset)
+	fmt.Printf("%snz%s %s%s%s\n", colorBlue, colorReset, colorGreen, version, colorReset)
 	return 0
 }
 

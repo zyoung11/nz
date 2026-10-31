@@ -5,7 +5,7 @@ info "full connectivity matrix"
 
 reset_grants
 
-ip_server=192.168.200.1
+ip_server=192.168.100.1
 ip_desktop=$(machine_ip_by_name desktop)
 ip_laptop=$(machine_ip_by_name laptop)
 ip_pc=$(machine_ip_by_name pc)
@@ -35,11 +35,11 @@ expect_path "laptop to desktop" node-b "$ip_desktop" "blocked"
 expect_path "pc to desktop" node-c "$ip_desktop" "blocked"
 
 info "grant opens exactly one direction"
-n0s allow friend/laptop --to desktop >/dev/null 2>&1
+nzs allow friend/laptop --to desktop >/dev/null 2>&1
 sleep 2
 expect_path "laptop to desktop after grant" node-b "$ip_desktop" "open"
 expect_path "pc to desktop stays blocked" node-c "$ip_desktop" "blocked"
-n0s deny friend/laptop --to desktop >/dev/null 2>&1
+nzs deny friend/laptop --to desktop >/dev/null 2>&1
 sleep 2
 expect_path "laptop to desktop after revoke" node-b "$ip_desktop" "blocked"
 
