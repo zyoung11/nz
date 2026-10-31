@@ -1,6 +1,6 @@
 # nz
 
-nz is a personal overlay network tool. One server, many machines, joined into one virtual LAN. nz is a ground-up rewrite of nz with a new protocol. It runs on Linux and Windows.
+nz is a personal overlay network tool. One server, many machines, joined into one virtual LAN.
 
 ## Build
 
@@ -137,17 +137,6 @@ On Windows `nz install` registers a Windows service. It starts at boot before us
 
 On Linux `nz install` writes a systemd unit with `Restart=always`. Without systemd run `nz start` with any init.
 
-## Logging
-
-No log file is written by default. Pass `--log` to `run` or `start` to write `nz.log` next to the binary. The file rotates to `nz.log.1` above 10 MB.
-
-| Prefix | Meaning |
-| --- | --- |
-| `[i]` | status |
-| `[+]` | success |
-| `[!]` | warning |
-| `[-]` | error |
-
 ## Runtime Files
 
 The program directory keeps only two files.
@@ -161,41 +150,3 @@ The program directory keeps only two files.
 | TUN device | kernel | created after joining |
 
 `state.json` holds the machine key pair, the cached server keys, the user table, the machine table and the grant list.
-
-## Coexistence with nz
-
-nz and nz run side by side without interference. The protocols differ and the two networks never mix.
-
-| Item | nz | nz |
-| --- | --- | --- |
-| UDP port | `4242` | `4399` |
-| subnet | `192.168.100.0/24` | configurable |
-| TUN name | `nz0` | `nz` |
-| state file | `state.json` | `state.json` |
-| protocol | `0x02` | `0x03` |
-
-## Testing
-
-The test suite uses podman with four containers.
-
-```bash
-cd test
-./run-all.sh
-```
-
-Covered: join and approval, IP allocation, connectivity matrix, direction blocking, blocking and unblocking, grants, forged sources, key rotation, remote management, CLI display, edge cases, multi user isolation and coexistence with nz. Not covered: the Windows service, the wintun driver and real NAT traversal.
-
-## Glossary
-
-| Term | Meaning |
-| --- | --- |
-| network | one server and all machines |
-| user | an account owning machines |
-| machine | one device in the network |
-| daemon | the background process doing forwarding and management |
-| admin socket | the local IPC channel for CLI commands |
-| P2P | a direct path between two machines without the server |
-| relay | forwarding through the server |
-| grant | an authorization for one machine to call another |
-| approval | the admin act of letting a request join |
-| verifier | one way data derived from a password |
