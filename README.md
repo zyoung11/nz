@@ -150,3 +150,8 @@ The program directory keeps only two files.
 | TUN device | kernel | created after joining |
 
 `state.json` holds the machine key pair, the cached server keys, the user table, the machine table and the grant list.
+
+## Mobile
+
+`mobile_nz` is the legacy Android client. It still speaks the old protocol and is kept as is. An update to the new protocol is planned.
+
