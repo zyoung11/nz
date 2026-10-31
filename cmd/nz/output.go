@@ -61,11 +61,11 @@ func printUserTable(users []state.User, machines []state.MachineView, grants []s
 	fmt.Println()
 	overview := make([][]string, 0, len(groups))
 	for _, g := range groups {
-		overview = append(overview, []string{g.status, g.user, fmt.Sprintf("%d", len(g.machines))})
+		overview = append(overview, []string{g.user, fmt.Sprintf("%d", len(g.machines)), g.status})
 	}
-	printTable([]string{"State", "User", "Machines"}, overview, func(rowIdx, colIdx int, _ string) string {
-		if colIdx == 0 {
-			return statusColor(overview[rowIdx][0])
+	printTable([]string{"User", "Machines", "State"}, overview, func(rowIdx, colIdx int, _ string) string {
+		if colIdx == 2 {
+			return statusColor(overview[rowIdx][2])
 		}
 		return colorReset
 	})
@@ -83,9 +83,13 @@ func printUserTable(users []state.User, machines []state.MachineView, grants []s
 			if m.Self {
 				status = "local"
 			}
+			trust := trustOf(grants, m.User, m.Name)
+			if m.Trusted && trust == "-" {
+				trust = "Trust"
+			}
 			rows = append(rows, []string{
 				m.Name, dash(m.VPNIP), status, dash(m.Fingerprint),
-				formatSeen(m.LastSeen), trustOf(grants, m.User, m.Name),
+				formatSeen(m.LastSeen), trust,
 			})
 		}
 		printTable(header, rows, func(rowIdx, colIdx int, _ string) string {

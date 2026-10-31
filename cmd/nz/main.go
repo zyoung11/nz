@@ -18,7 +18,7 @@ import (
 	"nz/internal/tun"
 )
 
-const version = "0.3.0"
+const version = "0.4.0"
 
 const (
 	colorMauve  = "\x1b[38;2;198;160;246m"
