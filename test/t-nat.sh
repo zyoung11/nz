@@ -3,6 +3,9 @@ source "$(dirname "$0")/lib.sh"
 
 info "relay fallback when the direct path is blocked"
 
+n0s allow friend/pc >/dev/null 2>&1
+sleep 2
+
 NODE_C_IP=$(podman inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' n0-node-c)
 podman exec n0-node-b iptables -I OUTPUT -d "$NODE_C_IP" -p udp -j DROP
 ok "direct path to pc is now a blackhole"

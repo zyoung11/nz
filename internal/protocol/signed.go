@@ -131,6 +131,7 @@ type PeerIntro struct {
 type AdminRequest struct {
 	Command string `json:"command"`
 	Target  string `json:"target,omitempty"`
+	To      string `json:"to,omitempty"`
 }
 
 // AdminReply carries the management result.

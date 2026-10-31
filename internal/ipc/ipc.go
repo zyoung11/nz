@@ -10,6 +10,7 @@ import (
 type Request struct {
 	Command string `json:"command"`
 	Target  string `json:"target"`
+	To      string `json:"to,omitempty"`
 }
 
 type Response struct {

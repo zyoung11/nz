@@ -62,6 +62,14 @@ type ServerAuth struct {
 	ExchPub []byte `json:"exch_pub,omitempty"`
 }
 
+// Grant authorizes a subject to actively call one machine. Subject is
+// a user name or a user name with a machine name. Target is a machine
+// name, where "server" means the server itself.
+type Grant struct {
+	Subject string `json:"subject"`
+	Target  string `json:"target"`
+}
+
 // MachineView is a machine marked for the querying machine itself.
 type MachineView struct {
 	Machine
@@ -75,6 +83,7 @@ type State struct {
 	ServerAuth *ServerAuth   `json:"server_auth,omitempty"`
 	Users      []User        `json:"users"`
 	Machines   []Machine     `json:"machines"`
+	Grants     []Grant       `json:"grants,omitempty"`
 }
 
 // ParseTarget splits "friend" or "friend/laptop" into user and machine.
@@ -377,6 +386,68 @@ func (s *State) ActiveMachines() []Machine {
 		}
 	}
 	return out
+}
+
+// Grant records that subject may actively call target.
+func (s *State) Grant(subject, target string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, g := range s.Grants {
+		if g.Subject == subject && g.Target == target {
+			return nil
+		}
+	}
+	s.Grants = append(s.Grants, Grant{Subject: subject, Target: target})
+	return s.saveLocked()
+}
+
+// Revoke removes the authorization of subject toward target.
+func (s *State) Revoke(subject, target string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.Grants[:0:0]
+	for _, g := range s.Grants {
+		if g.Subject != subject || g.Target != target {
+			out = append(out, g)
+		}
+	}
+	s.Grants = out
+	return s.saveLocked()
+}
+
+// GrantsView returns a copy of all grants.
+func (s *State) GrantsView() []Grant {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Grant(nil), s.Grants...)
+}
+
+// GrantsOf lists the target machines subject may actively call.
+func (s *State) GrantsOf(subject string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0)
+	for _, g := range s.Grants {
+		if g.Subject == subject {
+			out = append(out, g.Target)
+		}
+	}
+	return out
+}
+
+// IsGranted reports whether user or its machine may actively call target.
+func (s *State) IsGranted(user, machine, target string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, g := range s.Grants {
+		if g.Target != target {
+			continue
+		}
+		if g.Subject == user || g.Subject == user+"/"+machine {
+			return true
+		}
+	}
+	return false
 }
 
 // Touch records machine activity for the last seen column.

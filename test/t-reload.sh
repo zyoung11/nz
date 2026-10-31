@@ -13,7 +13,7 @@ podman exec n0-node-c sh -c 'echo "{\"mode\":\"node\",\"user\":\"friend\",\"pass
 podman exec n0-node-c n0 reload >/dev/null 2>&1
 sleep 3
 expect_eq "reload moves the machine to the new pin" "$(machine_ip_by_name pc)" "192.168.200.9"
-out=$(podman exec n0-node-c n0 status 2>&1)
+out=$(podman exec n0-node-c n0 list 2>&1)
 expect_contains "node reports the new vpn ip" "$out" "192.168.200.9"
 
 info "removing the pin keeps the current ip"
@@ -26,7 +26,7 @@ info "node rename through reload"
 podman exec n0-node-c sh -c 'echo "{\"mode\":\"node\",\"user\":\"friend\",\"password\":\"friendpw\",\"name\":\"pcrenamed\",\"domain\":\"n0-server\",\"port\":4399}" > /cfg/config.json'
 podman exec n0-node-c n0 reload >/dev/null 2>&1
 sleep 3
-out=$(podman exec n0-server n0 users 2>&1)
+out=$(podman exec n0-server n0 list 2>&1)
 expect_contains "rename applies through reload" "$out" "pcrenamed"
 
 info "server rejects structural changes"
@@ -45,10 +45,8 @@ podman exec n0-server sh -c 'echo "{\"mode\":\"server\",\"port\":4399,\"subnet\"
 podman exec n0-server n0 reload >/dev/null 2>&1
 
 info "restoring pc for later suites"
-n0s deny friend/pc >/dev/null 2>&1
-n0s deny friend/pcrenamed >/dev/null 2>&1
 podman exec n0-node-c sh -c 'echo "{\"mode\":\"node\",\"user\":\"friend\",\"password\":\"friendpw\",\"name\":\"pc\",\"domain\":\"n0-server\",\"port\":4399,\"ip\":7}" > /cfg/config.json'
 start_node_daemon node-c
-wait_pending pc
+sleep 3
 
 finish

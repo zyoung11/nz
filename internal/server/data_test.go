@@ -123,8 +123,8 @@ func TestRelayDeniedAcrossUsers(t *testing.T) {
 	if other.tryRecv(t) {
 		t.Errorf("cross user relay must be dropped")
 	}
-	if err := e.st.Trust("friend", "laptop"); err != nil {
-		t.Fatalf("trust: %v", err)
+	if err := e.st.Grant("friend/laptop", "desktop"); err != nil {
+		t.Fatalf("grant: %v", err)
 	}
 	friend.sendRelay(t, e, e.srv.serverIP())
 	if friend.tryRecv(t) {
@@ -159,8 +159,8 @@ func TestPeerQueryHidesAddressOnOneWay(t *testing.T) {
 	if answer.HasAddr {
 		t.Errorf("one way pair must not get addresses")
 	}
-	if err := e.st.Trust("friend", "laptop"); err != nil {
-		t.Fatalf("trust: %v", err)
+	if err := e.st.Grant("friend/laptop", "desktop"); err != nil {
+		t.Fatalf("grant: %v", err)
 	}
 	answer = e.queryPeerAs(t, friend, adminM.ip)
 	if !answer.HasAddr {

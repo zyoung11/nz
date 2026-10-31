@@ -6,8 +6,8 @@ info "block and unblock"
 ip_laptop=$(machine_ip_by_name laptop)
 ip_pc=$(machine_ip_by_name pc)
 
-n0s block friend/laptop
-sleep 2
+n0s deny friend/laptop
+sleep 3
 
 if ping_vpn node-c "$ip_laptop"; then
 	err "blocked machine still reachable"
@@ -23,8 +23,8 @@ else
 	ok "blocked machine cannot send traffic"
 fi
 
-n0s unblock friend/laptop
-sleep 2
+n0s allow friend/laptop
+sleep 3
 n0s allow friend/laptop >/dev/null 2>&1
 start_node_daemon node-b
 wait_joined node-b 10

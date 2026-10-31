@@ -12,7 +12,7 @@ else
 	ok "friend blocked from admin before trust"
 fi
 
-n0s trust friend/laptop
+n0s allow friend/laptop --to desktop
 sleep 1
 
 if ping_vpn node-b "$ip_desktop"; then
@@ -22,7 +22,7 @@ else
 	FAILS=$((FAILS + 1))
 fi
 
-n0s untrust friend/laptop
+n0s deny friend/laptop --to desktop
 sleep 1
 
 if ping_vpn node-b "$ip_desktop"; then

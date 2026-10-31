@@ -30,7 +30,7 @@ else
 	FAILS=$((FAILS + 1))
 fi
 
-out=$(n0c node-a status 2>&1)
+out=$(n0c node-a list 2>&1)
 expect_contains "n0 still healthy next to nz" "$out" "running"
 
 out=$(container_log node-a)

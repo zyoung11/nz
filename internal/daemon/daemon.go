@@ -17,7 +17,6 @@ import (
 	"nz/internal/ipc"
 	"nz/internal/logx"
 	"nz/internal/node"
-	"nz/internal/protocol"
 	"nz/internal/server"
 	"nz/internal/state"
 	"nz/internal/tun"
@@ -136,27 +135,26 @@ func notifyPingback(addr, token string) {
 }
 
 var readOnlyCommands = map[string]bool{
-	"status": true,
-	"list":   true,
-	"users":  true,
+	"list": true,
+}
+
+type listData struct {
+	Status   statusData          `json:"status"`
+	Users    []state.User        `json:"users"`
+	Machines []state.MachineView `json:"machines"`
+	Grants   []state.Grant       `json:"grants"`
 }
 
 func (d *Daemon) handle(uid uint32, req ipc.Request) ipc.Response {
 	if !readOnlyCommands[req.Command] && uid != 0 {
-		return ipc.Response{OK: false, Error: "this command needs root, run with sudo"}
+		return ipc.Response{OK: false, Error: fmt.Sprintf("this command needs root, run with sudo (uid %d)", uid)}
 	}
 	switch req.Command {
-	case "stop":
-		return d.handleStop()
 	case "reload":
 		return d.handleReload()
-	case "status":
-		return d.handleStatus()
 	case "list":
 		return d.handleList()
-	case "users":
-		return d.handleUsers()
-	case "allow", "deny", "block", "unblock", "trust", "untrust":
+	case "allow", "deny":
 		return d.handleAdmin(req)
 	default:
 		return ipc.Response{OK: false, Error: fmt.Sprintf("unknown command %s", req.Command)}
@@ -173,8 +171,34 @@ func (d *Daemon) Stop() {
 	})
 }
 
-func (d *Daemon) handleStop() ipc.Response {
-	d.Stop()
+func (d *Daemon) handleReload() ipc.Response {
+	cfg, err := config.Load(d.cfgPath)
+	if err != nil {
+		return ipc.Response{OK: false, Error: fmt.Sprintf("config rejected, keep running with old config: %v", err)}
+	}
+	if err := cfg.Validate(); err != nil {
+		return ipc.Response{OK: false, Error: fmt.Sprintf("config rejected, keep running with old config: %v", err)}
+	}
+	if err := d.checkReloadable(cfg); err != nil {
+		return ipc.Response{OK: false, Error: fmt.Sprintf("config rejected, keep running with old config: %v", err)}
+	}
+	if cfg.Mode == "server" && cfg.Admin.Password != d.cfg.Admin.Password {
+		salt := identity.UserSalt(cfg.Admin.Name)
+		if err := d.st.SetVerifier(cfg.Admin.Name, salt, identity.Verifier(cfg.Admin.Password, salt)); err != nil {
+			return ipc.Response{OK: false, Error: fmt.Sprintf("config rejected, keep running with old config: %v", err)}
+		}
+	}
+	d.cfg = cfg
+	if d.srv != nil {
+		d.srv.SetConfig(cfg)
+	}
+	if d.cfg.Mode == "node" {
+		if d.nodeCancel != nil {
+			d.nodeCancel()
+		}
+		d.startNode()
+	}
+	logx.Success("config reloaded")
 	return ipc.Response{OK: true}
 }
 
@@ -210,38 +234,63 @@ func (d *Daemon) startNode() {
 	}()
 }
 
-func (d *Daemon) handleReload() ipc.Response {
-	cfg, err := config.Load(d.cfgPath)
-	if err != nil {
-		return ipc.Response{OK: false, Error: fmt.Sprintf("config rejected, keep running with old config: %v", err)}
-	}
-	if err := cfg.Validate(); err != nil {
-		return ipc.Response{OK: false, Error: fmt.Sprintf("config rejected, keep running with old config: %v", err)}
-	}
-	if err := d.checkReloadable(cfg); err != nil {
-		return ipc.Response{OK: false, Error: fmt.Sprintf("config rejected, keep running with old config: %v", err)}
-	}
-	if cfg.Mode == "server" && cfg.Admin.Password != d.cfg.Admin.Password {
-		salt := identity.UserSalt(cfg.Admin.Name)
-		if err := d.st.SetVerifier(cfg.Admin.Name, salt, identity.Verifier(cfg.Admin.Password, salt)); err != nil {
-			return ipc.Response{OK: false, Error: fmt.Sprintf("config rejected, keep running with old config: %v", err)}
+func (d *Daemon) handleList() ipc.Response {
+	data := listData{Status: d.statusData(), Grants: d.st.GrantsView()}
+	if d.cfg.Mode == "node" {
+		reply, err := node.AdminCommand("users", "", "")
+		if err != nil {
+			return jsonData(data)
 		}
+		if !reply.OK {
+			return jsonData(data)
+		}
+		var remote struct {
+			Users    []state.User        `json:"users"`
+			Machines []state.MachineView `json:"machines"`
+		}
+		if err := json.Unmarshal([]byte(reply.Data), &remote); err != nil {
+			return ipc.Response{OK: false, Error: err.Error()}
+		}
+		data.Users = remote.Users
+		data.Machines = remote.Machines
+		return jsonData(data)
 	}
-	d.cfg = cfg
-	if d.srv != nil {
-		d.srv.SetConfig(cfg)
+	users, machines := d.srv.UsersView(d.cfg.Admin.Name, "server")
+	data.Users = users
+	data.Machines = machines
+	return jsonData(data)
+}
+
+func (d *Daemon) handleAdmin(req ipc.Request) ipc.Response {
+	to := req.To
+	if to == "" && req.Command == "allow" {
+		to = d.selfName()
 	}
 	if d.cfg.Mode == "node" {
-		if d.nodeCancel != nil {
-			d.nodeCancel()
+		reply, err := node.AdminCommand(req.Command, req.Target, to)
+		if err != nil {
+			return ipc.Response{OK: false, Error: err.Error()}
 		}
-		d.startNode()
+		if !reply.OK {
+			return ipc.Response{OK: false, Error: reply.Error}
+		}
+		return ipc.Response{OK: true}
 	}
-	logx.Success("config reloaded")
+	if err := d.srv.AdminCommand(req.Command, req.Target, to); err != nil {
+		return ipc.Response{OK: false, Error: err.Error()}
+	}
+	logx.Success("%s %s applied", req.Command, req.Target)
 	return ipc.Response{OK: true}
 }
 
-func (d *Daemon) handleStatus() ipc.Response {
+func (d *Daemon) selfName() string {
+	if d.cfg.Mode == "server" {
+		return "server"
+	}
+	return d.cfg.Name
+}
+
+func (d *Daemon) statusData() statusData {
 	users, machines := d.st.Snapshot()
 	pending := 0
 	for _, u := range users {
@@ -254,7 +303,7 @@ func (d *Daemon) handleStatus() ipc.Response {
 			pending++
 		}
 	}
-	data := statusData{
+	return statusData{
 		Version:  d.Version,
 		Conn:     connStateOf(d),
 		VPNIP:    connIPOf(d),
@@ -266,80 +315,6 @@ func (d *Daemon) handleStatus() ipc.Response {
 		Machines: len(machines),
 		Pending:  pending,
 	}
-	return jsonData(data)
-}
-
-func (d *Daemon) handleList() ipc.Response {
-	if d.cfg.Mode == "node" {
-		peers, err := node.QueryMachines()
-		if err != nil {
-			return ipc.Response{OK: false, Error: err.Error()}
-		}
-		return jsonData(peers)
-	}
-	_, machines := d.st.Snapshot()
-	peers := make([]protocol.PeerInfo, 0, len(machines)+1)
-	peers = append(peers, protocol.PeerInfo{
-		User:    d.cfg.Admin.Name,
-		Machine: "server",
-		VPNIP:   serverIP(d),
-		Status:  "online",
-		Trusted: true,
-		Self:    d.cfg.Mode == "server",
-	})
-	for _, m := range machines {
-		status := "unknown"
-		if !m.LastSeen.IsZero() {
-			status = "offline"
-			if time.Since(m.LastSeen) < 15*time.Second {
-				status = "online"
-			}
-		}
-		peers = append(peers, protocol.PeerInfo{
-			User:    m.User,
-			Machine: m.Name,
-			VPNIP:   m.VPNIP,
-			Trusted: m.Trusted || m.User == d.cfg.Admin.Name,
-			Status:  status,
-		})
-	}
-	return jsonData(peers)
-}
-
-func (d *Daemon) handleUsers() ipc.Response {
-	if d.cfg.Mode == "node" {
-		reply, err := node.AdminCommand("users", "")
-		if err != nil {
-			return ipc.Response{OK: false, Error: err.Error()}
-		}
-		if !reply.OK {
-			return ipc.Response{OK: false, Error: reply.Error}
-		}
-		return ipc.Response{OK: true, Data: reply.Data}
-	}
-	data, err := d.srv.UsersData(d.cfg.Admin.Name, "server")
-	if err != nil {
-		return ipc.Response{OK: false, Error: err.Error()}
-	}
-	return ipc.Response{OK: true, Data: data}
-}
-
-func (d *Daemon) handleAdmin(req ipc.Request) ipc.Response {
-	if d.cfg.Mode == "node" {
-		reply, err := node.AdminCommand(req.Command, req.Target)
-		if err != nil {
-			return ipc.Response{OK: false, Error: err.Error()}
-		}
-		if !reply.OK {
-			return ipc.Response{OK: false, Error: reply.Error}
-		}
-		return ipc.Response{OK: true}
-	}
-	if err := d.srv.AdminCommand(req.Command, req.Target); err != nil {
-		return ipc.Response{OK: false, Error: err.Error()}
-	}
-	logx.Success("%s %s applied", req.Command, req.Target)
-	return ipc.Response{OK: true}
 }
 
 func loadOrCreateIdentity(st *state.State) (*identity.Identity, error) {

@@ -16,7 +16,7 @@ func (s *Server) AllowRelay(src, dst state.Machine) bool {
 		return true
 	}
 	if dst.User == s.adminName() {
-		return src.Trusted
+		return s.st.IsGranted(src.User, src.Name, dst.Name)
 	}
 	return false
 }

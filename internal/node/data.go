@@ -55,7 +55,7 @@ func (n *Node) readFromUDP() {
 		case protocol.TypeApproveNotify:
 			deliver(n.approveCh, env)
 		case protocol.TypePolicyChanged:
-			n.dropAllPeers()
+			n.handlePolicyChanged(env)
 		case protocol.TypePeerIntro:
 			n.handlePeerIntro(env)
 		case protocol.TypeKeepAlive:
@@ -90,6 +90,9 @@ func (n *Node) readFromTUN() {
 }
 
 func (n *Node) sendTo(dst netip.Addr, raw []byte) {
+	if selfBlocked.Load() {
+		return
+	}
 	p := n.ensurePeer(dst)
 	if p == nil {
 		return
@@ -191,16 +194,19 @@ func (n *Node) ensureServerPeer() *peer {
 }
 
 // AdminCommand forwards a management operation to the server.
-func AdminCommand(command, target string) (protocol.AdminReply, error) {
+func AdminCommand(command, target, to string) (protocol.AdminReply, error) {
 	n := activeNode.Load()
 	if n == nil {
 		return protocol.AdminReply{}, fmt.Errorf("node is not running")
+	}
+	if n.conn == nil || !n.vpnIP.IsValid() {
+		return protocol.AdminReply{}, fmt.Errorf("node is not connected to the server yet")
 	}
 	msg := protocol.SignedMessage{
 		Type:    protocol.TypeAdminRequest,
 		SrcIP:   n.vpnIP,
 		DstIP:   serverAddrOf(n),
-		Payload: protocol.EncodeJSON(protocol.AdminRequest{Command: command, Target: target}),
+		Payload: protocol.EncodeJSON(protocol.AdminRequest{Command: command, Target: target, To: to}),
 	}
 	body := protocol.MarshalSigned(msg, n.id.Sign)
 	n.conn.WriteToUDPAddrPort(
@@ -302,6 +308,9 @@ func (n *Node) serverAuthFailed() {
 }
 
 func (n *Node) handleData(env protocol.Envelope, from netip.AddrPort) {
+	if selfBlocked.Load() {
+		return
+	}
 	signed, sig, err := protocol.ParseSigned(env.Body)
 	if err != nil {
 		return
@@ -402,6 +411,20 @@ func (n *Node) ensurePeerThenFlush(ip netip.Addr) {
 	for _, pkt := range q {
 		n.handleData(pkt.env, pkt.from)
 	}
+}
+
+func (n *Node) handlePolicyChanged(env protocol.Envelope) {
+	signed, sig, err := protocol.ParseSigned(env.Body)
+	if err != nil || !n.verifyServer(signed, sig) {
+		return
+	}
+	var payload struct {
+		Status string `json:"status"`
+	}
+	if err := protocol.DecodeJSON(signed.Payload, &payload); err == nil {
+		selfBlocked.Store(payload.Status == "blocked")
+	}
+	n.dropAllPeers()
 }
 
 func (n *Node) dropAllPeers() {

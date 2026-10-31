@@ -92,7 +92,7 @@ func (s *Server) hasRecentFlow(src, dst netip.Addr) bool {
 
 func (s *Server) relayData(m protocol.SignedMessage, raw []byte, src state.Machine) {
 	dst, ok := s.st.FindMachineByIP(m.DstIP.String())
-	if !ok {
+	if !ok || dst.Status != state.MachineActive {
 		return
 	}
 	if s.AllowRelay(src, dst) {
@@ -140,8 +140,8 @@ func (s *Server) handlePeerQuery(m protocol.SignedMessage, src state.Machine, re
 	if found && dst.Status == state.MachineActive {
 		answer = protocol.PeerAnswer{
 			Found:       true,
-			CanCall:     s.AllowRelay(src, dst),
-			CanCallBack: s.AllowRelay(dst, src),
+			CanCall:     src.Status == state.MachineActive && s.AllowRelay(src, dst),
+			CanCallBack: dst.Status == state.MachineActive && s.AllowRelay(dst, src),
 		}
 		answer.SignPub, answer.ExchPub = machineKeys(dst)
 		if s.AllowAddressExchange(src, dst) {
@@ -276,17 +276,17 @@ func (s *Server) handleAdminRequest(m protocol.SignedMessage, src state.Machine)
 		return
 	}
 	reply := protocol.AdminReply{OK: true}
-	if src.User != s.adminName() {
-		reply.OK = false
-		reply.Error = "only admin machines can manage"
-	} else if req.Command == "users" {
+	if req.Command == "users" {
 		data, err := s.UsersData(src.User, src.Name)
 		reply.OK = err == nil
 		reply.Data = data
 		if err != nil {
 			reply.Error = err.Error()
 		}
-	} else if err := s.AdminCommand(req.Command, req.Target); err != nil {
+	} else if src.User != s.adminName() {
+		reply.OK = false
+		reply.Error = "only admin machines can manage"
+	} else if err := s.AdminCommand(req.Command, req.Target, req.To); err != nil {
 		reply.OK = false
 		reply.Error = err.Error()
 	} else {

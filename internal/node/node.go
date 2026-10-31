@@ -48,6 +48,13 @@ func setConnState(state, ip string) {
 	connVPNIP.Store(ip)
 }
 
+var selfBlocked atomic.Bool
+
+// SelfBlocked reports whether the server marked this machine blocked.
+func SelfBlocked() bool {
+	return selfBlocked.Load()
+}
+
 type peer struct {
 	signPub     []byte
 	exchPub     []byte
@@ -185,7 +192,8 @@ func (n *Node) join() error {
 				return nil
 			}
 		default:
-			return fmt.Errorf("join rejected by server")
+			logx.Warn("join rejected by server, retrying in %s", joinRetryDelay)
+			time.Sleep(joinRetryDelay)
 		}
 	}
 }

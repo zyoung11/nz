@@ -274,7 +274,7 @@ func TestPolicyMatrix(t *testing.T) {
 	mine := state.Machine{User: "friend", Name: "laptop", Status: state.MachineActive}
 	friends := state.Machine{User: "friend", Name: "desktop", Status: state.MachineActive}
 	other := state.Machine{User: "bob", Name: "pc", Status: state.MachineActive}
-	trusted := state.Machine{User: "bob", Name: "trusted", Status: state.MachineActive, Trusted: true}
+	trusted := state.Machine{User: "bob", Name: "trusted", Status: state.MachineActive}
 
 	if !e.srv.AllowRelay(admin, other) {
 		t.Error("admin must reach everyone")
@@ -285,8 +285,15 @@ func TestPolicyMatrix(t *testing.T) {
 	if e.srv.AllowRelay(mine, admin) {
 		t.Error("untrusted machine must not reach admin")
 	}
+	if e.srv.AllowRelay(trusted, admin) {
+		t.Error("ungranted machine must not reach admin")
+	}
+	e.st.Grant("bob/trusted", "desktop")
 	if !e.srv.AllowRelay(trusted, admin) {
-		t.Error("trusted machine must reach admin")
+		t.Error("granted machine must reach admin")
+	}
+	if e.srv.AllowRelay(state.Machine{User: "bob", Name: "other", Status: state.MachineActive}, admin) {
+		t.Error("grant must not cover sibling machines")
 	}
 	if e.srv.AllowRelay(mine, other) {
 		t.Error("different users must not reach each other")

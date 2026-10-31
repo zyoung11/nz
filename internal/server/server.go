@@ -210,31 +210,19 @@ func (s *Server) NotifyApprove(user, machine string) {
 	logx.Success("approval pushed to %s/%s", user, machine)
 }
 
-// AdminCommand executes a management operation locally.
-func (s *Server) AdminCommand(command, target string) error {
-	user, machine, err := state.ParseTarget(target)
+// AdminCommand executes a management operation. Target is the
+// subject to manage and to is the machine being authorized, where an
+// empty to means the server itself.
+func (s *Server) AdminCommand(command, subject, to string) error {
+	user, machine, err := state.ParseTarget(subject)
 	if err != nil {
 		return err
 	}
 	switch command {
 	case "allow":
-		if err := s.st.Allow(user, machine); err != nil {
-			return err
-		}
-		if machine != "" {
-			return s.approveMachine(user, machine)
-		}
-		return nil
+		err = s.allow(user, machine, to)
 	case "deny":
-		err = s.st.Deny(user, machine)
-	case "block":
-		err = s.st.Block(user, machine)
-	case "unblock":
-		err = s.st.Unblock(user, machine)
-	case "trust":
-		err = s.st.Trust(user, machine)
-	case "untrust":
-		err = s.st.Untrust(user, machine)
+		err = s.deny(user, machine, to)
 	default:
 		return fmt.Errorf("unknown command %s", command)
 	}
@@ -244,21 +232,100 @@ func (s *Server) AdminCommand(command, target string) error {
 	return err
 }
 
+func (s *Server) allow(user, machine, to string) error {
+	if machine == "" {
+		u, found := s.st.GetUser(user)
+		if !found {
+			return fmt.Errorf("user %s not found", user)
+		}
+		switch u.Status {
+		case state.UserPending:
+			return s.st.Allow(user, "")
+		case state.UserBlocked:
+			return s.st.Unblock(user, "")
+		default:
+			return s.st.Grant(user, to)
+		}
+	}
+	m, found := s.st.GetMachine(user, machine)
+	if !found {
+		return fmt.Errorf("machine %s/%s not found", user, machine)
+	}
+	switch m.Status {
+	case state.MachinePending:
+		if err := s.st.Allow(user, machine); err != nil {
+			return err
+		}
+		return s.approveMachine(user, machine)
+	case state.MachineBlocked:
+		return s.st.Unblock(user, machine)
+	default:
+		return s.st.Grant(user+"/"+machine, to)
+	}
+}
+
+func (s *Server) deny(user, machine, to string) error {
+	subject := user
+	if machine != "" {
+		subject = user + "/" + machine
+	}
+	if to != "" {
+		return s.st.Revoke(subject, to)
+	}
+	for _, g := range s.st.GrantsOf(subject) {
+		if err := s.st.Revoke(subject, g); err != nil {
+			return err
+		}
+	}
+	if machine == "" {
+		u, found := s.st.GetUser(user)
+		if !found {
+			return fmt.Errorf("user %s not found", user)
+		}
+		switch u.Status {
+		case state.UserPending:
+			return s.st.Deny(user, "")
+		case state.UserBlocked:
+			return nil
+		default:
+			return s.st.Block(user, "")
+		}
+	}
+	m, found := s.st.GetMachine(user, machine)
+	if !found {
+		return fmt.Errorf("machine %s/%s not found", user, machine)
+	}
+	switch m.Status {
+	case state.MachinePending:
+		return s.st.Deny(user, machine)
+	case state.MachineBlocked:
+		return nil
+	default:
+		return s.st.Block(user, machine)
+	}
+}
+
 // broadcastPolicyChanged tells every machine to refresh its cached
-// policy so allow and block take effect within one round trip.
+// policy and carries its own current status so a blocked machine stops
+// sending at once.
 func (s *Server) broadcastPolicyChanged() {
-	s.mu.Lock()
-	targets := make([]netip.AddrPort, 0, len(s.ipEndpoints))
-	for _, addr := range s.ipEndpoints {
-		targets = append(targets, addr)
-	}
-	s.mu.Unlock()
-	msg := protocol.SignedMessage{
-		Type:  protocol.TypePolicyChanged,
-		SrcIP: s.serverIP(),
-	}
-	body := protocol.MarshalSigned(msg, s.id.Sign)
-	for _, addr := range targets {
+	_, machines := s.st.Snapshot()
+	for _, m := range machines {
+		ip, err := netip.ParseAddr(m.VPNIP)
+		if err != nil {
+			continue
+		}
+		addr := s.ipEndpoint(ip)
+		if !addr.IsValid() {
+			continue
+		}
+		payload := protocol.EncodeJSON(map[string]string{"status": string(m.Status)})
+		msg := protocol.SignedMessage{
+			Type:    protocol.TypePolicyChanged,
+			SrcIP:   s.serverIP(),
+			Payload: payload,
+		}
+		body := protocol.MarshalSigned(msg, s.id.Sign)
 		s.sendRaw(protocol.Envelope{Type: protocol.TypePolicyChanged, Body: body}, addr)
 	}
 }
@@ -282,10 +349,32 @@ func (s *Server) approveMachine(user, machine string) error {
 	return nil
 }
 
-// UsersData returns the full user and machine table as JSON, marking
-// the row that belongs to the querying machine.
-func (s *Server) UsersData(selfUser, selfMachine string) (string, error) {
-	users, machines := s.st.Snapshot()
+// UsersView returns the user table and the machine table with the row
+// of the querying machine marked. A plain machine only sees its own
+// user group.
+func (s *Server) UsersView(selfUser, selfMachine string) ([]state.User, []state.MachineView) {
+	users, _ := s.st.Snapshot()
+	views := s.machineViewLocked(selfUser, selfMachine)
+	if selfUser == s.adminName() {
+		return users, views
+	}
+	filteredUsers := make([]state.User, 0, 1)
+	for _, u := range users {
+		if u.Name == selfUser {
+			filteredUsers = append(filteredUsers, u)
+		}
+	}
+	filteredViews := make([]state.MachineView, 0, len(views))
+	for _, v := range views {
+		if v.User == selfUser {
+			filteredViews = append(filteredViews, v)
+		}
+	}
+	return filteredUsers, filteredViews
+}
+
+func (s *Server) machineViewLocked(selfUser, selfMachine string) []state.MachineView {
+	_, machines := s.st.Snapshot()
 	views := make([]state.MachineView, 0, len(machines)+1)
 	views = append(views, state.MachineView{
 		Machine: state.Machine{
@@ -306,6 +395,13 @@ func (s *Server) UsersData(selfUser, selfMachine string) (string, error) {
 			Self:    m.User == selfUser && m.Name == selfMachine,
 		})
 	}
+	return views
+}
+
+// UsersData returns the full user and machine table as JSON, marking
+// the row that belongs to the querying machine.
+func (s *Server) UsersData(selfUser, selfMachine string) (string, error) {
+	users, views := s.UsersView(selfUser, selfMachine)
 	data, err := json.Marshal(struct {
 		Users    []state.User        `json:"users"`
 		Machines []state.MachineView `json:"machines"`

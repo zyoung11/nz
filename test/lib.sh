@@ -65,7 +65,7 @@ start_node_daemon() {
 	podman exec "n0-$container" pkill -f "n0 run" >/dev/null 2>&1
 	sleep 1
 	podman exec "n0-$container" sh -c 'rm -f /usr/local/bin/n0.log'
-	podman exec -d "n0-$container" n0 run --config /cfg/config.json --log
+	podman exec -d "n0-$container" sh -c 'n0 run --config /cfg/config.json --log 2>> /usr/local/bin/n0.log'
 }
 
 container_log() {
@@ -91,7 +91,7 @@ wait_pending() {
 	local name="$1" timeout="${2:-20}"
 	local deadline=$((SECONDS + timeout))
 	while ((SECONDS < deadline)); do
-		if [[ "$(podman exec n0-server n0 users --pending 2>&1)" == *"$name"* ]]; then
+		if [[ "$(podman exec n0-server n0 list --pending 2>&1)" == *"$name"* ]]; then
 			return 0
 		fi
 		sleep 1
@@ -106,7 +106,7 @@ machine_ip() {
 }
 
 machine_ip_by_name() {
-	n0s users | grep "$1" | grep -oE "192\.168\.200\.[0-9]+" | head -1
+	n0s list | grep "$1" | grep -oE "192\.168\.200\.[0-9]+" | head -1
 }
 
 ping_vpn() {
