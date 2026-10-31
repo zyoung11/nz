@@ -245,7 +245,7 @@ func (s *Server) readFromTUN() {
 
 func (s *Server) sendLocalData(dst netip.Addr, raw []byte) {
 	m, ok := s.st.FindMachineByIP(dst.String())
-	if !ok {
+	if !ok || m.Status != state.MachineActive {
 		return
 	}
 	if !s.AllowRelay(s.ServerMachine(), m) {

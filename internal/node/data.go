@@ -109,13 +109,13 @@ func (n *Node) sendTo(dst netip.Addr, raw []byte) {
 	}
 	msg := protocol.SignedMessage{Type: protocol.TypeData, SrcIP: n.vpnIP, DstIP: dst, Payload: cipher}
 	body := protocol.MarshalSigned(msg, n.id.Sign)
-	env := protocol.Marshal(protocol.Envelope{Type: protocol.TypeData, Body: body})
-	if p.directOK && time.Since(p.lastSeen) < p2pFreshAfter {
-		n.conn.WriteToUDPAddrPort(env, p.realAddr)
+	bothWays := p.canCall && p.canCallBack
+	if bothWays && p.directOK && time.Since(p.lastSeen) < p2pFreshAfter {
+		n.conn.WriteToUDPAddrPort(protocol.Marshal(protocol.Envelope{Type: protocol.TypeData, Body: body}), p.realAddr)
 		return
 	}
-	if p.realAddr.IsValid() {
-		n.conn.WriteToUDPAddrPort(env, p.realAddr)
+	if bothWays && p.realAddr.IsValid() {
+		n.conn.WriteToUDPAddrPort(protocol.Marshal(protocol.Envelope{Type: protocol.TypeData, Body: body}), p.realAddr)
 	}
 	n.conn.WriteToUDPAddrPort(
 		protocol.Marshal(protocol.Envelope{Type: protocol.TypeRelayData, Body: body}),

@@ -105,8 +105,56 @@ machine_ip() {
 	n0s list | grep -oE "192\.168\.200\.[0-9]+" | sed -n "${1}p"
 }
 
+reset_grants() {
+	podman cp n0-server:/cfg/state.json /tmp/n0-state.json 2>/dev/null
+	python3 - <<'PYEOF2'
+import json
+d = json.load(open("/tmp/n0-state.json"))
+d["grants"] = []
+for m in d.get("machines", []):
+    if m.get("status") == "blocked":
+        m["status"] = "active"
+for u in d.get("users", []):
+    if u.get("status") == "blocked":
+        u["status"] = "active"
+json.dump(d, open("/tmp/n0-state.json", "w"), indent=2)
+PYEOF2
+	podman cp /tmp/n0-state.json n0-server:/cfg/state.json 2>/dev/null
+	podman exec n0-server pkill -f "n0 run" >/dev/null 2>&1
+	sleep 1
+	podman exec -d n0-server sh -c 'n0 run --config /cfg/config.json --log 2>> /usr/local/bin/n0.log'
+	sleep 6
+}
+
+machine_ip_of() {
+	n0s list | sed 's/\x1b\[[0-9;]*m//g' | awk -v user="$1" -v name="$2" -F'│' '{
+		gsub(/^ +| +$/, "", $2)
+		gsub(/^ +| +$/, "", $3)
+		if ($2 == user && $3 == name) {
+			for (i = 1; i <= NF; i++) {
+				if ($i ~ /192\.168\./) {
+					gsub(/ /, "", $i)
+					print $i
+					exit
+				}
+			}
+		}
+	}'
+}
+
 machine_ip_by_name() {
-	n0s list | grep "$1" | grep -oE "192\.168\.200\.[0-9]+" | head -1
+	n0s list | sed 's/\x1b\[[0-9;]*m//g' | awk -v name="$1" -F'│' '{
+		gsub(/^ +| +$/, "", $2)
+		if ($2 == name) {
+			for (i = 1; i <= NF; i++) {
+				if ($i ~ /192\.168\./) {
+					gsub(/ /, "", $i)
+					print $i
+					exit
+				}
+			}
+		}
+	}'
 }
 
 ping_vpn() {
